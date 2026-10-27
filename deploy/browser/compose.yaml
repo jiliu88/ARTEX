@@ -1,0 +1,45 @@
+name: artex-browser
+services:
+  browser:
+    build: .
+    image: artex-browser:playwright-visible
+    restart: unless-stopped
+    init: true
+    volumes:
+      - ./data:/data
+    shm_size: 512m
+    mem_limit: 1536m
+    cpus: 1.0
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      browser:
+        aliases: [browser]
+        ipv4_address: 172.29.240.10
+    depends_on: [egress]
+    healthcheck:
+      test: ["CMD", "node", "-e", "Promise.all(['http://127.0.0.1:6080/vnc.html','http://127.0.0.1:9222/json/version'].map(u=>fetch(u))).then(rs=>process.exit(rs.every(r=>r.ok)?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+  egress:
+    image: ubuntu/squid@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
+    restart: unless-stopped
+    volumes:
+      - ./squid.conf:/etc/squid/squid.conf:ro
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 64
+    networks: [browser, uplink]
+networks:
+  browser:
+    name: artex_browser
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.29.240.0/24
+  uplink:
+    external: true
+    name: artex_default
