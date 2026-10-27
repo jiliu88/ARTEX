@@ -19,7 +19,7 @@ services:
         ipv4_address: 172.29.240.10
     depends_on: [egress]
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:6080/vnc.html').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "Promise.all(['http://127.0.0.1:6080/vnc.html','http://127.0.0.1:9222/json/version'].map(u=>fetch(u))).then(rs=>process.exit(rs.every(r=>r.ok)?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
