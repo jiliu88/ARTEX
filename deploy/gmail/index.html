@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ARTEX Gmail 测试邮件接入</title>
+<body style="font:16px system-ui;max-width:760px;margin:48px auto;padding:0 20px;color:#18263b;background:#f5f7fb">
+<h1>Gmail 测试邮件接入</h1><p>使用现有 Google 账号，单独授权读取你本人测试账号的邮件。</p>
+<p id="status" role="status">正在读取连接状态…</p>
+<section style="background:white;padding:24px;border-radius:12px;margin:20px 0"><h2>Google 官方授权</h2>
+<p>Google 的只读授权可访问邮箱内容；此接入额外将 ARTEX 的读取限制在指定测试标签、完整发件人地址和最近 7 天内。</p>
+<label>Google OAuth 桌面客户端 JSON <input id="client" type="file" accept="application/json,.json"></label>
+<p><button id="upload">保存客户端配置</button> <button id="authorize" disabled>前往 Google 官方授权</button></p>
+<p>配置文件直接保存到美国服务器。无需把邮箱密码、验证码或授权令牌发到聊天。</p></section>
+<section style="background:white;padding:24px;border-radius:12px"><h2>测试邮件范围</h2>
+<p>先在 Gmail 中建立独立测试标签，只归入你本人发起的测试账号邮件。</p>
+<p><label>测试标签 <input id="label" value="ARTEX-Test" maxlength="100"></label></p>
+<label>允许的完整发件人地址（每行一个）<br><textarea id="senders" rows="4" style="width:95%" placeholder="noreply@example.com"></textarea></label>
+<p><button id="policy">保存读取范围</button></p></section>
+<p id="message" role="alert"></p><p><a href="/chat/">返回 ARTEX 对话</a></p>
+<script type="module" src="ui.mjs"></script></body></html>

@@ -1,0 +1,7 @@
+{
+  "name": "artex-gmail-test-mail",
+  "private": true,
+  "type": "module",
+  "scripts": {"start": "node server.mjs", "test": "node --test policy.test.mjs"},
+  "dependencies": {"@modelcontextprotocol/sdk": "1.32.2", "zod": "4.6.7"}
+}
