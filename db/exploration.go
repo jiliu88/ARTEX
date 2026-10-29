@@ -1,6 +1,7 @@
 package db
 
 import (
+ "context"
 	"bytes"
 	"database/sql"
 	"encoding/json"
@@ -2018,4 +2019,14 @@ func (s *ExplorationStore) ActivityByIDsForTerminalIntents(ids []int64) ([]Activ
 // exploration node is deleted). taskID and nodeID may be 0 (stored as NULL).
 func (s *ExplorationStore) AddStandaloneFinding(taskID, nodeID int64, vulnclass, name, severity, summary, evidence, worker string, assetIDs []int64) (int64, error) {
 	return s.db.AddFinding(taskID, nodeID, vulnclass, name, severity, summary, evidence, worker, assetIDs)
+}
+
+// RuntimeCounts 在数据库内计数，不加载可能很大的节点 payload。
+func (s *ExplorationStore) RuntimeCounts(ctx context.Context) (running, goals, met int, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT
+ count(*) FILTER (WHERE kind='intent' AND state='running'),
+ count(*) FILTER (WHERE kind='goal'),
+ count(*) FILTER (WHERE kind='goal' AND state='met')
+ FROM exploration_nodes WHERE exploration_id=$1`, s.expID).Scan(&running,&goals,&met)
+	return
 }

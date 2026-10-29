@@ -372,6 +372,11 @@ WHERE task_id=$1 AND asset_id=ANY($2::bigint[])`, taskID, ids)
 // task's direct sources. Inherited non-terminal intents remain hidden, matching
 // the existing source-aware session contract.
 func (s *AssetStore) IntentAssets(taskID int64) ([]IntentAsset, error) {
+	return s.IntentAssetsForIDs(taskID, nil)
+}
+
+// nil 保留旧接口的全量语义；空切片表示客户端尚未加载任何意图。
+func (s *AssetStore) IntentAssetsForIDs(taskID int64, intentIDs []int64) ([]IntentAsset, error) {
 	rows, err := s.db.Query(`
 WITH context AS (
     SELECT task.id AS task_id, task.exploration_id, false AS inherited
@@ -401,8 +406,9 @@ JOIN exploration_nodes intent ON intent.exploration_id=context.exploration_id AN
 JOIN exploration_anchors anchor ON anchor.node_id=intent.id
 JOIN assets asset ON asset.id=anchor.asset_id
 LEFT JOIN task_asset_links link ON link.task_id=context.task_id AND link.asset_id=asset.id
-WHERE NOT context.inherited OR intent.state IN ('done','blocked','exhausted','stopped')
-ORDER BY context.inherited, intent.id DESC, asset.id`, taskID)
+WHERE (NOT context.inherited OR intent.state IN ('done','blocked','exhausted','stopped'))
+AND ($2::bigint[] IS NULL OR intent.id=ANY($2::bigint[]))
+ORDER BY context.inherited, intent.id DESC, asset.id`, taskID, intentIDs)
 	if err != nil {
 		return nil, err
 	}

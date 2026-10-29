@@ -214,7 +214,7 @@ func (s *Server) interceptListPending(w http.ResponseWriter, r *http.Request) {
 	if pg == nil {
 		return
 	}
-	pending, err := pg.ListPendingIntercepts()
+	pending, err := pg.ListPendingInterceptsForTask(r.URL.Query().Get("task"))
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -613,4 +613,12 @@ func (s *Server) interceptExecution(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"conversation_id": target.ConversationID, "task_id": target.TaskID, "session": target.Session, "seq": target.Seq, "items": activityDTOs(target.Items)})
+}
+
+// 角标只查询数量，避免反复读取脚本和完整审批历史。
+func (s *Server) interceptPendingCount(w http.ResponseWriter, r *http.Request) {
+	pg := s.pg(w); if pg == nil { return }
+	count, err := pg.PendingInterceptCount(r.URL.Query().Get("task"))
+	if err != nil { writeErr(w, 500, "读取审批数量失败"); return }
+	writeJSON(w, 200, map[string]int{"count":count})
 }

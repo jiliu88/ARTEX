@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { startPolling } from "@/lib/polling";
 
 import {
   ArrowUpIcon,
@@ -805,9 +806,9 @@ export function SessionsTab({ taskId, requestedSession = "" }: { taskId: string;
   // ── task token total (whole task, all agents) ───────────────────────────────────
   React.useEffect(() => {
     let alive = true;
-    const load = () =>
+    const load = (signal: AbortSignal) =>
       api
-        .tokenStats(taskId)
+        .tokenStats(taskId, signal)
         .then((r) => {
           if (!alive) return;
           setTaskTokens(r.total);
@@ -816,21 +817,20 @@ export function SessionsTab({ taskId, requestedSession = "" }: { taskId: string;
         .catch(() => {
           // Polling is best-effort; the next interval retries automatically.
         });
-    void load();
-    const t = setInterval(load, 5000);
+    const t = startPolling(load, 5000);
     return () => {
       alive = false;
-      clearInterval(t);
+      t();
     };
   }, [taskId]);
 
   React.useEffect(() => {
     let alive = true;
     setMainChatRunning(null);
-    const load = () => {
+    const load = (signal: AbortSignal) => {
       const request = ++chatStatusRequestRef.current;
       return api
-        .chatStatus(taskId)
+        .chatStatus(taskId, signal)
         .then(({ running }) => {
           if (alive && chatStatusRequestRef.current === request) setMainChatRunning(running);
         })
@@ -839,49 +839,46 @@ export function SessionsTab({ taskId, requestedSession = "" }: { taskId: string;
           // activity remains a conservative fallback.
         });
     };
-    void load();
-    const timer = setInterval(load, 2000);
+    const timer = startPolling(load, 2000);
     return () => {
       alive = false;
-      clearInterval(timer);
+      timer();
     };
   }, [taskId]);
 
   React.useEffect(() => {
     let alive = true;
-    const load = () =>
+    const load = (signal: AbortSignal) =>
       api
-        .taskLLMResolution(taskId)
+        .taskLLMResolution(taskId, signal)
         .then((value) => {
           if (alive) setLLMResolutions(value);
         })
         .catch(() => {
           // Polling is best-effort; the next interval retries automatically.
         });
-    void load();
-    const timer = setInterval(load, 10_000);
+    const timer = startPolling(load, 10_000);
     return () => {
       alive = false;
-      clearInterval(timer);
+      timer();
     };
   }, [taskId]);
 
   React.useEffect(() => {
     let alive = true;
-    const load = () =>
+    const load = (signal: AbortSignal) =>
       api
-        .interceptTask(taskId)
+        .interceptPending(taskId, signal)
         .then((rows) => {
           if (alive) setPendingIntercepts(rows.filter((r) => r.status === "pending"));
         })
         .catch(() => {
           // Polling is best-effort; the next interval retries automatically.
         });
-    void load();
-    const t = setInterval(load, 5000);
+    const t = startPolling(load, 5000);
     return () => {
       alive = false;
-      clearInterval(t);
+      t();
     };
   }, [taskId]);
 
@@ -1070,24 +1067,24 @@ export function SessionsTab({ taskId, requestedSession = "" }: { taskId: string;
     };
   }, [taskId, patchStore]);
 
+  const loadedIntentIDs = [...new Set([...intents, ...olderIntents].map((item) => item.id))].sort().join(",");
   React.useEffect(() => {
     let active = true;
-    const load = () =>
+    const load = (signal: AbortSignal) =>
       api
-        .taskIntentAssets(taskId)
+        .taskIntentAssets(taskId, loadedIntentIDs ? loadedIntentIDs.split(",") : [], signal)
         .then((assets) => {
           if (active) setIntentAssets(assets);
         })
         .catch(() => {
           // The next poll retries; Worker controls and transcripts remain available.
         });
-    void load();
-    const timer = setInterval(load, 5000);
+    const timer = startPolling(load, 5000);
     return () => {
       active = false;
-      clearInterval(timer);
+      timer();
     };
-  }, [taskId]);
+  }, [taskId, loadedIntentIDs]);
 
   // ── worker (intent) session list — paged, poll first page lightly ───────────────
   React.useEffect(() => {
@@ -1097,9 +1094,9 @@ export function SessionsTab({ taskId, requestedSession = "" }: { taskId: string;
     setOlderIntents([]);
     setFirstIntentsHasMore(false);
     setOlderIntentsHasMore(false);
-    const load = () =>
+    const load = (signal: AbortSignal) =>
       api
-        .intentsPage(taskId, 0, 300)
+        .intentsPage(taskId, 0, 50, signal)
         .then((r) => {
           if (!active) return;
           const freshIds = new Set(r.items.map((item) => item.id));
@@ -1121,11 +1118,10 @@ export function SessionsTab({ taskId, requestedSession = "" }: { taskId: string;
         .catch(() => {
           // Polling is best-effort; the next interval retries automatically.
         });
-    void load();
-    const t = setInterval(load, 5000);
+    const t = startPolling(load, 5000);
     return () => {
       active = false;
-      clearInterval(t);
+      t();
     };
   }, [taskId]);
 
@@ -1136,7 +1132,7 @@ export function SessionsTab({ taskId, requestedSession = "" }: { taskId: string;
     if (!Number.isFinite(minId)) return;
     setLoadingOlderIntents(true);
     api
-      .intentsPage(taskId, minId, 300)
+      .intentsPage(taskId, minId, 50)
       .then((r) => {
         setOlderIntents((prev) => {
           const seen = new Set([...intents, ...prev].map((n) => n.id));

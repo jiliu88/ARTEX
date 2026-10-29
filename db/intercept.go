@@ -181,7 +181,17 @@ func scanInterceptPending(s interface{ Scan(...any) error }, p *InterceptPending
 
 // ListPendingIntercepts returns all unresolved approval requests, newest first.
 func (d *DB) ListPendingIntercepts() ([]InterceptPending, error) {
-	rows, err := d.Query(`SELECT ` + interceptPendingCols + ` FROM intercept_pending WHERE status='pending' ORDER BY created_at DESC`)
+	return d.ListPendingInterceptsForTask("")
+}
+
+func (d *DB) PendingInterceptCount(taskID string) (int, error) {
+	var count int
+	err := d.QueryRow(`SELECT count(*) FROM intercept_pending WHERE status='pending' AND ($1='' OR task_id=$1)`, taskID).Scan(&count)
+	return count, err
+}
+
+func (d *DB) ListPendingInterceptsForTask(taskID string) ([]InterceptPending, error) {
+	rows, err := d.Query(`SELECT ` + interceptPendingCols + ` FROM intercept_pending WHERE status='pending' AND ($1='' OR task_id=$1) ORDER BY created_at DESC`, taskID)
 	if err != nil {
 		return nil, err
 	}

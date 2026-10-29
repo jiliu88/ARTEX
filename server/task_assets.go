@@ -1,6 +1,7 @@
 package server
 
 import (
+ "strconv"
 	"errors"
 	"net/http"
 	"strings"
@@ -99,7 +100,19 @@ func (s *Server) taskIntentAssets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	taskID, _ := parseTaskID(task.ID)
-	assets, err := s.m.Assets().IntentAssets(taskID)
+	var ids []int64
+	if r.URL.Query().Has("intent_ids") {
+		ids = []int64{}
+		for _, value := range strings.Split(r.URL.Query().Get("intent_ids"), ",") {
+			if value == "" { continue }
+			id, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || id <= 0 || len(ids) >= 1000 {
+				writeErr(w, 400, "invalid intent_ids"); return
+			}
+			ids = append(ids, id)
+		}
+	}
+	assets, err := s.m.Assets().IntentAssetsForIDs(taskID, ids)
 	if err != nil {
 		writeTaskAssetError(w, err)
 		return

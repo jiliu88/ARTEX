@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { startPolling } from "@/lib/polling";
 
 import {
   ChevronLeftIcon,
@@ -380,16 +381,16 @@ export function AssetsTab({ taskId }: { taskId: string }) {
     let active = true;
     const dsl = query.trim();
     const request = ++assetsRequestRef.current;
-    const load = async () => {
+    const load = async (signal: AbortSignal) => {
       setLoading(true);
       try {
         // The search always stays within this task's assets: taskAssets and
         // searchTaskAssets both pin task_id server-side.
         const [current, nextCounts] = await Promise.all([
           dsl
-            ? api.searchTaskAssets(taskId, dsl, tab, size, page * size)
-            : api.taskAssets(taskId, tab, size, page * size),
-          api.assetCounts(taskId),
+            ? api.searchTaskAssets(taskId, dsl, tab, size, page * size, signal)
+            : api.taskAssets(taskId, tab, size, page * size, signal),
+          api.assetCounts(taskId, signal),
         ]);
         if (!active || assetsRequestRef.current !== request) return;
         setRows(current.assets);
@@ -414,12 +415,10 @@ export function AssetsTab({ taskId }: { taskId: string }) {
       }
     };
     // Debounce DSL keystrokes; plain (re)loads and polling run immediately.
-    const debounce = setTimeout(() => void load(), dsl ? 400 : 0);
-    const timer = setInterval(() => void load(), 10_000);
+    const stop = startPolling(load, 10_000, dsl ? 400 : 0);
     return () => {
       active = false;
-      clearTimeout(debounce);
-      clearInterval(timer);
+      stop();
     };
   }, [page, query, refreshKey, size, tab, taskId]);
 

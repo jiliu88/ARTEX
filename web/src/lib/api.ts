@@ -1,3 +1,6 @@
+import { HttpError, requestJSON, type RequestOptions } from "./request";
+import { notePollFailure } from "./polling";
+export { HttpError } from "./request";
 // Real backend client. /api/* is proxied to the Go backend (next.config rewrites).
 // Returns the domain types in lib/types.ts. Shapes match the backend handlers;
 // a few fields the backend serializes differently (e.g. created_at as a unix int)
@@ -122,40 +125,27 @@ function getToken(): string | null {
   return localStorage.getItem("artex_token");
 }
 
-export async function http<T>(path: string, init?: RequestInit): Promise<T> {
+export async function http<T>(path: string, init?: RequestOptions): Promise<T> {
   if (MOCK) return mockHandle<T>(init?.method ?? "GET", path, init?.body ?? null);
   const token = getToken();
-  const r = await fetch(`/api${path}`, {
-    ...init,
-    headers: {
-      ...(init?.body ? { "Content-Type": "application/json" } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers as Record<string, string> | undefined),
-    },
-  });
-  if (r.status === 401) {
-    if (typeof window !== "undefined") {
+  try {
+    return await requestJSON<T>(`/api${path}`, {
+      ...init,
+      headers: {
+        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init?.headers as Record<string, string> | undefined),
+      },
+    });
+  } catch (error) {
+    notePollFailure(init?.signal);
+    if (error instanceof HttpError && error.status === 401 && typeof window !== "undefined") {
       localStorage.removeItem("artex_token");
       document.cookie = "artex_token=; path=/; max-age=0";
       window.location.href = "/login";
     }
-    throw new Error("未授权");
+    throw error;
   }
-  if (!r.ok) {
-    const fallback = `${init?.method ?? "GET"} ${path}: ${r.status}`;
-    let message = fallback;
-    try {
-      const payload = (await r.json()) as { error?: unknown };
-      if (typeof payload.error === "string" && payload.error.trim()) {
-        message = payload.error.trim();
-      }
-    } catch {
-      // Keep the status-based fallback for empty or non-JSON error responses.
-    }
-    throw new Error(message);
-  }
-  if (r.status === 204) return undefined as T;
-  return r.json();
 }
 
 // sseUrl builds a URL for Server-Sent Events streams.
@@ -217,7 +207,7 @@ export function openSSE(path: string): EventSource {
   return new EventSource(url, { withCredentials: local && target.hostname === window.location.hostname });
 }
 
-const get = <T>(p: string) => http<T>(p);
+const get = <T>(p: string, signal?: AbortSignal) => http<T>(p, { signal });
 const post = <T>(p: string, body?: unknown) =>
   http<T>(p, { method: "POST", body: body ? JSON.stringify(body) : undefined });
 const put = <T>(p: string, body?: unknown) =>
@@ -299,7 +289,7 @@ export const api = {
   // ---- tasks ----
   tasks: () =>
     get<{ tasks: Task[]; active: string }>("/tasks").then((r) => ({ tasks: arr(r.tasks), active: r.active ?? "" })),
-  task: (id: string) => get<Task>(`/tasks/${encodeURIComponent(id)}`),
+  task: (id: string, signal?: AbortSignal) => get<Task>(`/tasks/${encodeURIComponent(id)}`, signal),
   createTask: (input: {
     name?: string;
     remark?: string;
@@ -428,7 +418,7 @@ export const api = {
       accepted: true;
       request_id: string;
     }>(`/tasks/${taskId}/intents/${intentId}/messages`, { message, request_id: requestId }),
-  taskLLMResolution: (id: string) => get<TaskLLMResolutions>(`/tasks/${id}/llm/resolution`),
+  taskLLMResolution: (id: string, signal?: AbortSignal) => get<TaskLLMResolutions>(`/tasks/${id}/llm/resolution`, signal),
   // 重跑一条没跑成功的意图(blocked/exhausted/stopped)：置回 open，worker 会重新认领、从头再跑。
   rerunIntent: (taskId: string, intentId: string) =>
     post<{ id: string; reopened: number }>(`/tasks/${taskId}/intents/${intentId}/rerun`),
@@ -436,9 +426,9 @@ export const api = {
   rerunBlocked: (taskId: string) => post<{ id: string; reopened: number }>(`/tasks/${taskId}/intents/rerun-blocked`),
   setActive: (id: string) => post<{ active: string }>("/active", { id }),
   // ---- stats ----
-  stats: (task?: string) => get<Stats>(`/stats${tq(task)}`),
+  stats: (task?: string, signal?: AbortSignal) => get<Stats>(`/stats${tq(task)}`, signal),
   // 资产测试覆盖度(粗估，供参考)：范围内资产被 fact 碰过的占比 + 按类型的 总数/已测。
-  taskCoverage: (id: string) =>
+  taskCoverage: (id: string, signal?: AbortSignal) =>
     get<{
       enabled: boolean; // 资产覆盖度功能是否开启；false 时其余字段为零值
       scope_rows: number;
@@ -446,15 +436,15 @@ export const api = {
       tested: number;
       pct: number | null;
       by_type: { type: string; total: number; tested: number }[];
-    }>(`/tasks/${id}/coverage`),
+    }>(`/tasks/${id}/coverage`, signal),
   // 资产覆盖图：范围内全部资产 + 连接用的根域名/公司节点，含 tested/in_scope。
   taskCoverageGraph: (id: string) => get<CoverageGraphData>(`/tasks/${id}/coverage-graph`),
   // 全局 llm_usage 聚合（仪表盘新版 token 视图）：按 profile 总量 + 按天分桶。
   usageStats: (days = 365) => get<UsageStats>(`/tokens/usage?days=${days}`),
   // ---- 目标管理（总览）----
   // 本任务全部目标（text/vulnclass/state）。
-  taskGoals: (id: string) =>
-    get<{ goals: TaskGoal[] | null }>(`/tasks/${id}/goals`).then((response) => ({ goals: arr(response.goals) })),
+  taskGoals: (id: string, signal?: AbortSignal) =>
+    get<{ goals: TaskGoal[] | null }>(`/tasks/${id}/goals`, signal).then((response) => ({ goals: arr(response.goals) })),
   // 人工新增目标：写入图谱并通知 planner、复活任务。
   addGoal: (id: string, text: string, vulnclass?: string) =>
     post<TaskGoal>(`/tasks/${id}/goals`, { text, vulnclass: vulnclass ?? "" }),
@@ -466,8 +456,8 @@ export const api = {
 
   // ---- 操作约束管理（总览）----
   // 本任务全部操作约束（allow/deny）。
-  taskConstraints: (id: string) =>
-    get<{ constraints: TaskConstraint[] | null }>(`/tasks/${id}/constraints`).then((response) => ({
+  taskConstraints: (id: string, signal?: AbortSignal) =>
+    get<{ constraints: TaskConstraint[] | null }>(`/tasks/${id}/constraints`, signal).then((response) => ({
       constraints: arr(response.constraints),
     })),
   // 新增约束（不通知 planner，下一轮规划自然读到）。
@@ -493,7 +483,7 @@ export const api = {
     post<{ ok: boolean; enabled: boolean }>(`/tasks/${id}/intercept-rules/${ruleId}/toggle`, { enabled }),
 
   // 本任务测试范围列表（含继承自来源任务的范围）。
-  taskScope: (id: string) => get<{ scope: TaskScopeRow[] }>(`/tasks/${id}/scope`),
+  taskScope: (id: string, signal?: AbortSignal) => get<{ scope: TaskScopeRow[] }>(`/tasks/${id}/scope`, signal),
   // 手动新增一条测试范围（kind=company/root_domain/subdomain/ip/cidr）。
   addTaskScope: (id: string, kind: string, value: string, reason?: string) =>
     post<TaskScopeRow>(`/tasks/${id}/scope`, { kind, value, reason }),
@@ -554,20 +544,20 @@ export const api = {
     get<{ count: number; total: number; assets: Asset[] }>(
       `/assets?dsl=${encodeURIComponent(dsl)}${type ? `&type=${encodeURIComponent(type)}` : ""}&limit=${limit}&offset=${offset}`,
     ).then((r) => ({ assets: r?.assets ?? [], total: r?.total ?? r?.count ?? 0 })),
-  assetCounts: (taskId = "") =>
-    get<Record<string, number>>(`/assets/counts${taskId ? `?task_id=${encodeURIComponent(taskId)}` : ""}`),
+  assetCounts: (taskId = "", signal?: AbortSignal) =>
+    get<Record<string, number>>(`/assets/counts${taskId ? `?task_id=${encodeURIComponent(taskId)}` : ""}`, signal),
   deleteAssets: (ids: number[]) =>
     http<{ deleted: number }>("/assets", { method: "DELETE", body: JSON.stringify({ ids }) }),
   // task-scoped view of the same endpoint — server-side paginated like `assets`
-  taskAssets: (taskId: string, type = "", limit = 50, offset = 0) =>
+  taskAssets: (taskId: string, type = "", limit = 50, offset = 0, signal?: AbortSignal) =>
     get<{ count: number; total: number; assets: Asset[] }>(
-      `/assets?task_id=${encodeURIComponent(taskId)}&type=${encodeURIComponent(type)}&limit=${limit}&offset=${offset}`,
+      `/assets?task_id=${encodeURIComponent(taskId)}&type=${encodeURIComponent(type)}&limit=${limit}&offset=${offset}`, signal,
     ).then((r) => ({ assets: r?.assets ?? [], total: r?.total ?? r?.count ?? 0 })),
   // DSL search scoped to a task — the backend forces the task_id filter, so it
   // always stays within that task's assets (same DSL grammar as `searchAssets`).
-  searchTaskAssets: (taskId: string, dsl: string, type = "", limit = 50, offset = 0) =>
+  searchTaskAssets: (taskId: string, dsl: string, type = "", limit = 50, offset = 0, signal?: AbortSignal) =>
     get<{ count: number; total: number; assets: Asset[] }>(
-      `/assets?task_id=${encodeURIComponent(taskId)}&dsl=${encodeURIComponent(dsl)}&type=${encodeURIComponent(type)}&limit=${limit}&offset=${offset}`,
+      `/assets?task_id=${encodeURIComponent(taskId)}&dsl=${encodeURIComponent(dsl)}&type=${encodeURIComponent(type)}&limit=${limit}&offset=${offset}`, signal,
     ).then((r) => ({ assets: r?.assets ?? [], total: r?.total ?? r?.count ?? 0 })),
   attachTaskAssets: (taskId: string, assetIds: number[], sourceSummary: string) =>
     post<TaskAssetMutation>(`/tasks/${taskId}/assets`, {
@@ -577,8 +567,8 @@ export const api = {
   registerTaskAssetScopes: (taskId: string, scope: CompanyScopeRule[]) =>
     post<TaskAssetScopeMutation>(`/tasks/${taskId}/assets`, { scope }),
   detachTaskAsset: (taskId: string, assetId: number) => del<{ detached: number }>(`/tasks/${taskId}/assets/${assetId}`),
-  taskIntentAssets: (taskId: string) =>
-    get<{ assets: IntentAsset[] }>(`/tasks/${taskId}/intent-assets`).then((r) => arr(r.assets)),
+  taskIntentAssets: (taskId: string, intentIds?: string[], signal?: AbortSignal) =>
+    get<{ assets: IntentAsset[] }>(`/tasks/${taskId}/intent-assets${intentIds ? `?intent_ids=${encodeURIComponent(intentIds.join(","))}` : ""}`, signal).then((r) => arr(r.assets)),
 
   // ---- companies (企业 + 资产范围；归属唯一来源) ----
   companies: () => get<Company[]>("/companies").then(arr),
@@ -609,7 +599,7 @@ export const api = {
 
   // ---- exploration (per task) ----
   frontier: (task?: string) => get<TaskNode[]>(`/exploration/frontier${tq(task)}`).then(arr),
-  findings: (task?: string) => get<Finding[]>(`/exploration/findings${tq(task)}`).then(arr),
+  findings: (task?: string, signal?: AbortSignal) => get<Finding[]>(`/exploration/findings${tq(task)}`, signal).then(arr),
   findingsPage: (q: FindingQuery) => {
     const p = findingFilterParams(q);
     p.set("page", String(q.page));
@@ -799,10 +789,10 @@ export const api = {
     }),
   deepenFinding: (id: string, description: string) =>
     post<FindingDeepenResponse>(`/exploration/findings/${id}/deepen`, { description }),
-  intents: (task?: string) => get<TaskNode[]>(`/exploration/intents${tq(task)}`).then(arr),
-  tokenStats: (task?: string) =>
+  intents: (task?: string, signal?: AbortSignal) => get<TaskNode[]>(`/exploration/intents${tq(task)}`, signal).then(arr),
+  tokenStats: (task?: string, signal?: AbortSignal) =>
     get<{ workers: TokenUsage[]; sessions: SessionTokenUsage[]; total: TokenTotal }>(
-      `/exploration/tokens${tq(task)}`,
+      `/exploration/tokens${tq(task)}`, signal,
     ).then((r) => ({
       workers: arr(r.workers),
       sessions: arr(r.sessions),
@@ -813,9 +803,9 @@ export const api = {
     get<ConvTokenSummary[]>("/tokens/conversations")
       .then(arr)
       .catch(() => [] as ConvTokenSummary[]),
-  explorationGraph: (task?: string) => get<{ nodes: TaskNode[]; edges: Edge[] }>(`/exploration/graph${tq(task)}`),
+  explorationGraph: (task?: string, signal?: AbortSignal) => get<{ nodes: TaskNode[]; edges: Edge[] }>(`/exploration/graph${tq(task)}`, signal),
   // 播报板:服务端按创建顺序分页的探索节点(默认最新在前)。
-  explorationNodes: (task: string, query: ExplorationNodeQuery = {}) => {
+  explorationNodes: (task: string, query: ExplorationNodeQuery = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams();
     if (task) q.set("task", task);
     q.set("page", String(query.page ?? 1));
@@ -824,7 +814,7 @@ export const api = {
     if (query.states?.length) q.set("state", query.states.join(","));
     if (query.q?.trim()) q.set("q", query.q.trim());
     if (query.order === "asc") q.set("order", "asc");
-    return get<ExplorationNodePage>(`/exploration/nodes?${q.toString()}`).then((r) => ({
+    return get<ExplorationNodePage>(`/exploration/nodes?${q.toString()}`, signal).then((r) => ({
       items: arr(r.items),
       total: r.total ?? 0,
       page: r.page ?? 1,
@@ -866,12 +856,12 @@ export const api = {
   },
   // Paged worker (intent) session list — reaches past the legacy fixed 300 cap.
   // before=0 → newest page; before=<id> → older page. has_more = older intents exist.
-  intentsPage: (task: string, before = 0, limit = 300) => {
+  intentsPage: (task: string, before = 0, limit = 50, signal?: AbortSignal) => {
     const q = new URLSearchParams({ limit: String(limit) });
     if (task) q.set("task", task);
     q.set("before", String(before > 0 ? before : 0));
     q.set("page", "1"); // marker so the backend returns the paged {items,has_more} shape
-    return get<{ items: TaskNode[]; has_more: boolean }>(`/exploration/intents?${q.toString()}`).then((r) => ({
+    return get<{ items: TaskNode[]; has_more: boolean }>(`/exploration/intents?${q.toString()}`, signal).then((r) => ({
       items: arr(r.items),
       hasMore: !!r.has_more,
     }));
@@ -1009,7 +999,7 @@ export const api = {
     ),
   chat: (message: string, task?: string, attachments?: ChatAttachment[], seg?: number) =>
     post<{ reply: string; mode: string }>(`/chat${tq(task)}`, { message, attachments, seg }),
-  chatStatus: (taskId: string) => get<{ running: boolean }>(`/tasks/${taskId}/chat/status`),
+  chatStatus: (taskId: string, signal?: AbortSignal) => get<{ running: boolean }>(`/tasks/${taskId}/chat/status`, signal),
   // 方式1 文件上传:落到会话/任务工作目录 uploads/，返回可供 agent Read 的相对路径。
   chatUpload: async (scope: "task" | "session" | "staging", id: string, files: File[]) => {
     if (MOCK)
@@ -1342,7 +1332,8 @@ export const api = {
     post<{ ok: boolean; enabled: boolean }>(`/asset-intercept/rules/${id}/toggle`, { enabled }),
 
   // ---- intercept pending (ask) ----
-  interceptPending: () => get<{ pending: InterceptPending[] }>("/intercept/pending").then((r) => arr(r.pending)),
+  interceptPendingCount: (task = "", signal?: AbortSignal) => get<{ count: number }>(`/intercept/pending/count${tq(task)}`, signal).then((r) => r.count),
+  interceptPending: (task = "", signal?: AbortSignal) => get<{ pending: InterceptPending[] }>(`/intercept/pending${tq(task)}`, signal).then((r) => arr(r.pending)),
   interceptGetOne: (id: number) => get<InterceptPending>(`/intercept/pending/${id}`),
   interceptDecide: (id: number, decision: "allowed" | "denied") =>
     post<{ ok: boolean }>(`/intercept/pending/${id}/decide`, { decision }),
@@ -1352,18 +1343,18 @@ export const api = {
     ),
   interceptDetail: (id: number) => get<InterceptDetail>(`/intercept/history/${id}`),
   interceptHistory: () => get<{ items: InterceptApprovalRow[] }>("/intercept/history").then((r) => arr(r.items)),
-  interceptHistoryPage: (page = 1, size = 20, filter: InterceptApprovalFilter = {}) =>
+  interceptHistoryPage: (page = 1, size = 20, filter: InterceptApprovalFilter = {}, signal?: AbortSignal) =>
     get<{ items: InterceptApprovalRow[]; total?: number }>(
-      `/intercept/history?${interceptPageQuery(page, size, filter)}`,
+      `/intercept/history?${interceptPageQuery(page, size, filter)}`, signal,
     ).then((r) => ({
       items: arr(r.items),
       total: r.total ?? r.items?.length ?? 0,
     })),
   interceptTask: (taskId: string) =>
     get<{ items: InterceptApprovalRow[] }>(`/intercept/task/${taskId}`).then((r) => arr(r.items)),
-  interceptTaskPage: (taskId: string, page = 1, size = 20, filter: InterceptApprovalFilter = {}) =>
+  interceptTaskPage: (taskId: string, page = 1, size = 20, filter: InterceptApprovalFilter = {}, signal?: AbortSignal) =>
     get<{ items: InterceptApprovalRow[]; total?: number }>(
-      `/intercept/task/${encodeURIComponent(taskId)}?${interceptPageQuery(page, size, filter)}`,
+      `/intercept/task/${encodeURIComponent(taskId)}?${interceptPageQuery(page, size, filter)}`, signal,
     ).then((r) => ({
       items: arr(r.items),
       total: r.total ?? r.items?.length ?? 0,
@@ -1430,8 +1421,8 @@ export const api = {
   llmRecordsDeleteTask: (task: string) => del<{ deleted: number }>(`/llm/records?task=${encodeURIComponent(task)}`),
   // 按模型聚合本任务的 token 用量（来自常开的 llm_usage 计量账本，逐次调用精确，
   // per-agent 绑定 / 轮询 / 中断消耗都覆盖）。
-  tokensByModel: (task: string) =>
-    get<{ models: ModelTokenStat[] }>(`/llm/records/by-model?task=${encodeURIComponent(task)}`),
+  tokensByModel: (task: string, signal?: AbortSignal) =>
+    get<{ models: ModelTokenStat[] }>(`/llm/records/by-model?task=${encodeURIComponent(task)}`, signal),
 
   // ---- 一键更新 ----
   // 检查以后端为准：下载是后端做的，浏览器能连 GitHub 而服务器连不上的情况很常见
