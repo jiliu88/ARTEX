@@ -386,12 +386,18 @@ export function AssetsTab({ taskId }: { taskId: string }) {
       try {
         // The search always stays within this task's assets: taskAssets and
         // searchTaskAssets both pin task_id server-side.
-        const [current, nextCounts] = await Promise.all([
+        const results = await Promise.allSettled([
           dsl
             ? api.searchTaskAssets(taskId, dsl, tab, size, page * size, signal)
             : api.taskAssets(taskId, tab, size, page * size, signal),
           api.assetCounts(taskId, signal),
         ]);
+        // 等待本轮所有请求结束，避免一个失败后另一个仍在传输时启动下一轮。
+        const [assetsResult, countsResult] = results;
+        if (assetsResult.status === "rejected") throw assetsResult.reason;
+        if (countsResult.status === "rejected") throw countsResult.reason;
+        const current = assetsResult.value;
+        const nextCounts = countsResult.value;
         if (!active || assetsRequestRef.current !== request) return;
         setRows(current.assets);
         setTotal(current.total);
