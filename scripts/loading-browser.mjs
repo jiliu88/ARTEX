@@ -19,7 +19,9 @@ const server=createServer(async(req,res)=>{
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const browser=await chromium.launch({headless:true});
 const page=await browser.newPage();
-await page.addInitScript(()=>localStorage.setItem('artex_token','synthetic-browser-only'));
+await page.addInitScript(()=>{
+ if(!/^\/login\/?$/.test(location.pathname))localStorage.setItem('artex_token','synthetic-browser-only');
+});
 let mode='stats-hang';const errors=[];
 page.on('pageerror',e=>errors.push(e.message));
 const fixture={id:'1',name:'合成加载回归任务',description:'合成加载回归任务',goal:'验证加载',status:'paused',paused:true,created_at:1,worker_count:1,goals_total:0,goals_met:0,source_tasks:[],llm_profile_ids:[]};
