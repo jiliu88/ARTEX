@@ -617,8 +617,14 @@ func (s *Server) interceptExecution(w http.ResponseWriter, r *http.Request) {
 
 // 角标只查询数量，避免反复读取脚本和完整审批历史。
 func (s *Server) interceptPendingCount(w http.ResponseWriter, r *http.Request) {
-	pg := s.pg(w); if pg == nil { return }
+	pg := s.pg(w)
+	if pg == nil {
+		return
+	}
 	count, err := pg.PendingInterceptCount(r.URL.Query().Get("task"))
-	if err != nil { writeErr(w, 500, "读取审批数量失败"); return }
-	writeJSON(w, 200, map[string]int{"count":count})
+	if err != nil {
+		writeErr(w, 500, "读取审批数量失败")
+		return
+	}
+	writeJSON(w, 200, map[string]int{"count": count})
 }

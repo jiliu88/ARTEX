@@ -1363,25 +1363,11 @@ export const api = {
   // ---- intercept tool-config (全局工具拦截范围) ----
   interceptGetToolConfig: async (): Promise<{ enabled_tools: string[] }> => {
     if (MOCK) return { enabled_tools: ["bash"] };
-    const token = getToken();
-    const r = await fetch("/api/intercept/tool-config", {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!r.ok) throw new Error(await r.text());
-    return r.json();
+    return get<{ enabled_tools: string[] }>("/intercept/tool-config");
   },
   interceptSetToolConfig: async (enabledTools: string[]): Promise<void> => {
     if (MOCK) return;
-    const token = getToken();
-    const r = await fetch("/api/intercept/tool-config", {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ enabled_tools: enabledTools }),
-    });
-    if (!r.ok) throw new Error(await r.text());
+    await put("/intercept/tool-config", { enabled_tools: enabledTools });
   },
 
   // ---- intercept LLM judge (模型兜底审批,全局配置) ----

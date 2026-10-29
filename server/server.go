@@ -1073,7 +1073,10 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 
 	// per-task running state + heartbeat (distinct from "LLM configured").
 	inFlight, goalsTotal, goalsMet, err := t.Store.RuntimeCounts(r.Context())
-	if err != nil { writeErr(w, 500, "读取任务统计失败"); return }
+	if err != nil {
+		writeErr(w, 500, "读取任务统计失败")
+		return
+	}
 	last := s.engine.LastActivity(t.ID)
 	paused := s.engine.IsPaused(t.ID)
 	activeCalls := s.engine.ActiveLLMCalls(t.ID)

@@ -191,7 +191,7 @@ func (d *DB) PendingInterceptCount(taskID string) (int, error) {
 }
 
 func (d *DB) ListPendingInterceptsForTask(taskID string) ([]InterceptPending, error) {
-	rows, err := d.Query(`SELECT ` + interceptPendingCols + ` FROM intercept_pending WHERE status='pending' AND ($1='' OR task_id=$1) ORDER BY created_at DESC`, taskID)
+	rows, err := d.Query(`SELECT `+interceptPendingCols+` FROM intercept_pending WHERE status='pending' AND ($1='' OR task_id=$1) ORDER BY created_at DESC`, taskID)
 	if err != nil {
 		return nil, err
 	}

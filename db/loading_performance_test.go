@@ -1,9 +1,10 @@
 package db
+
 import (
- "os"
- "sort"
- "testing"
- "time"
+	"os"
+	"sort"
+	"testing"
+	"time"
 )
 
 const legacyContextCoverageCTE = directTaskContextCTE + `,
@@ -37,13 +38,22 @@ tested AS (
   JOIN context_tasks ctx ON ctx.exploration_id=en.exploration_id
 )`
 
-
 // 只在明确提供隔离 DSN 时运行，不探测本机或生产配置。
 func TestLoadingScopeEquivalenceAndPerformance(t *testing.T) {
- if os.Getenv("ARTEX_PG_DSN")=="" { t.Fatal("requires isolated ARTEX_PG_DSN") }
- d,err:=Open(os.Getenv("ARTEX_PG_DSN")); if err!=nil {t.Fatal(err)}; defer d.Close()
- tx,err:=d.Begin(); if err!=nil {t.Fatal(err)}; defer tx.Rollback()
- fixture:=`
+	if os.Getenv("ARTEX_PG_DSN") == "" {
+		t.Fatal("requires isolated ARTEX_PG_DSN")
+	}
+	d, err := Open(os.Getenv("ARTEX_PG_DSN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	tx, err := d.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	fixture := `
  CREATE TEMP TABLE tasks(id bigint,exploration_id bigint,deleted_at timestamptz);
  CREATE TEMP TABLE task_relations(task_id bigint,source_task_id bigint);
  CREATE TEMP TABLE task_scope(id bigint,task_id bigint,kind text,company_id bigint,domain text,net cidr,value text);
@@ -59,19 +69,33 @@ func TestLoadingScopeEquivalenceAndPerformance(t *testing.T) {
  INSERT INTO exploration_anchors VALUES(1,19999),(2,19998),(3,19997),(4,19996);
  CREATE INDEX ON assets(root_domain); CREATE INDEX ON assets(domain); CREATE INDEX ON assets(company_id);
  CREATE INDEX ON task_scope(task_id); ANALYZE assets; ANALYZE task_scope;`
- if _,err=tx.Exec(fixture);err!=nil {t.Fatal(err)}
- fingerprint:=func(cte string) string {
-  var hash string
-  if err:=tx.QueryRow("WITH "+cte+" SELECT md5(string_agg(id::text||':'||type||':'||label,',' ORDER BY id)) FROM target",1).Scan(&hash);err!=nil {t.Fatal(err)}
-  return hash
- }
- if fingerprint(legacyContextCoverageCTE)!=fingerprint(contextCoverageCTE) {t.Fatal("scope membership/provenance changed")}
- median:=func(cte string) time.Duration {
-  _=fingerprint(cte); times:=[]time.Duration{}
-  for range 5 { start:=time.Now();_=fingerprint(cte);times=append(times,time.Since(start)) }
-  sort.Slice(times,func(i,j int)bool{return times[i]<times[j]});return times[2]
- }
- oldTime,newTime:=median(legacyContextCoverageCTE),median(contextCoverageCTE)
- t.Logf("assets=20000 scopes=1007 old_ms=%d new_ms=%d improvement_percent=%.2f",oldTime.Milliseconds(),newTime.Milliseconds(),100*(1-float64(newTime)/float64(oldTime)))
- if newTime>oldTime*3/10 || newTime>500*time.Millisecond {t.Fatalf("query budget failed old=%v new=%v",oldTime,newTime)}
+	if _, err = tx.Exec(fixture); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := func(cte string) string {
+		var hash string
+		if err := tx.QueryRow("WITH "+cte+" SELECT md5(string_agg(id::text||':'||type||':'||label,',' ORDER BY id)) FROM target", 1).Scan(&hash); err != nil {
+			t.Fatal(err)
+		}
+		return hash
+	}
+	if fingerprint(legacyContextCoverageCTE) != fingerprint(contextCoverageCTE) {
+		t.Fatal("scope membership/provenance changed")
+	}
+	median := func(cte string) time.Duration {
+		_ = fingerprint(cte)
+		times := []time.Duration{}
+		for range 5 {
+			start := time.Now()
+			_ = fingerprint(cte)
+			times = append(times, time.Since(start))
+		}
+		sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
+		return times[2]
+	}
+	oldTime, newTime := median(legacyContextCoverageCTE), median(contextCoverageCTE)
+	t.Logf("assets=20000 scopes=1007 old_ms=%d new_ms=%d improvement_percent=%.2f", oldTime.Milliseconds(), newTime.Milliseconds(), 100*(1-float64(newTime)/float64(oldTime)))
+	if newTime > oldTime*3/10 || newTime > 500*time.Millisecond {
+		t.Fatalf("query budget failed old=%v new=%v", oldTime, newTime)
+	}
 }

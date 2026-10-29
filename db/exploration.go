@@ -1,8 +1,8 @@
 package db
 
 import (
- "context"
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -2027,6 +2027,6 @@ func (s *ExplorationStore) RuntimeCounts(ctx context.Context) (running, goals, m
  count(*) FILTER (WHERE kind='intent' AND state='running'),
  count(*) FILTER (WHERE kind='goal'),
  count(*) FILTER (WHERE kind='goal' AND state='met')
- FROM exploration_nodes WHERE exploration_id=$1`, s.expID).Scan(&running,&goals,&met)
+ FROM exploration_nodes WHERE exploration_id=$1`, s.expID).Scan(&running, &goals, &met)
 	return
 }

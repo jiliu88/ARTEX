@@ -60,7 +60,7 @@ import type {
   Activity,
   ChatAttachment,
   IntentAsset,
-  InterceptApprovalRow,
+  InterceptPending,
   Session,
   SessionStatus,
   SessionTokenUsage,
@@ -663,7 +663,7 @@ export function SessionsTab({ taskId, requestedSession = "" }: { taskId: string;
   const [sessionTokens, setSessionTokens] = React.useState<Record<string, SessionTokenUsage>>({});
   const [llmResolutions, setLLMResolutions] = React.useState<TaskLLMResolutions | null>(null);
   // Pending intercept requests for this task — used to show warning icons on sessions.
-  const [pendingIntercepts, setPendingIntercepts] = React.useState<InterceptApprovalRow[]>([]);
+  const [pendingIntercepts, setPendingIntercepts] = React.useState<InterceptPending[]>([]);
 
   // Refs backing SSE/loading without re-render churn.
   const snapshotRef = React.useRef(0); // task-level snapshot cursor → SSE since=
