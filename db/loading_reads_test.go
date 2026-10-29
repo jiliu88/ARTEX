@@ -17,7 +17,7 @@ func TestLoadingReadFiltersAndCounts(t *testing.T) {
  }
  if _,err=d.CreateDecidedIntercept(0,0,key,"test","test",nil,"allowed","synthetic");err!=nil {t.Fatal(err)}
  if count,err:=d.PendingInterceptCount(key);err!=nil || count!=1 {t.Fatalf("pending count=%d err=%v",count,err)}
- if rows,err:=d.ListPendingInterceptsForTask(key);err!=nil || len(rows)!=1 || rows[0].TaskID!=key {t.Fatalf("pending filtering failed: %v",err)}
+ if rows,err:=d.ListPendingInterceptsForTask(key);err!=nil || len(rows)!=1 || (rows[0].TaskID==nil || *rows[0].TaskID!=key) {t.Fatalf("pending filtering failed: %v",err)}
  asset,err:=d.Assets().UpsertRootDomain(UpsertRootDomainReq{Domain:"loading-filter-"+key+".invalid",TaskID:task.ID});if err!=nil {t.Fatal(err)}
  defer d.Assets().DeleteByIDs([]int64{asset})
  store:=d.Exploration(task.ExplorationID)
@@ -25,7 +25,7 @@ func TestLoadingReadFiltersAndCounts(t *testing.T) {
  second,err:=store.AddNode(KindIntent,map[string]any{"summary":"two"},0,"open","test",[]int64{asset});if err!=nil {t.Fatal(err)}
  if _,err=store.AddNode(KindGoal,map[string]any{"text":"goal"},0,"met","test",nil);err!=nil {t.Fatal(err)}
  running,goals,met,err:=store.RuntimeCounts(context.Background());if err!=nil||running!=1||goals!=1||met!=1 {t.Fatalf("aggregate running=%d goals=%d met=%d err=%v",running,goals,met,err)}
- rows,err:=d.Assets().IntentAssetsForIDs(task.ID,[]int64{first.ID});if err!=nil||len(rows)!=1||rows[0].IntentID!=first.ID {t.Fatalf("intent filtering failed %v",err)}
+ rows,err:=d.Assets().IntentAssetsForIDs(task.ID,[]int64{first});if err!=nil||len(rows)!=1||rows[0].IntentID!=first {t.Fatalf("intent filtering failed %v",err)}
  rows,err=d.Assets().IntentAssetsForIDs(task.ID,[]int64{});if err!=nil||len(rows)!=0 {t.Fatalf("empty selection leaked rows %v",err)}
- rows,err=d.Assets().IntentAssets(task.ID);if err!=nil||len(rows)!=2 {t.Fatalf("legacy list changed second=%d err=%v",second.ID,err)}
+ rows,err=d.Assets().IntentAssets(task.ID);if err!=nil||len(rows)!=2 {t.Fatalf("legacy list changed second=%d err=%v",second,err)}
 }
