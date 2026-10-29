@@ -14,6 +14,7 @@ export function startPolling(
   let stopped = false;
   let running = false;
   let failures = 0;
+  let refreshOnVisible = false;
   let controller: AbortController | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const schedule = (delay: number) => {
@@ -31,13 +32,15 @@ export function startPolling(
       attempts.delete(controller.signal);
       running = false;
       failures = attempt.failed ? failures + 1 : 0;
-      schedule(failures ? [5000, 10000, 20000, 30000][Math.min(failures - 1, 3)] : intervalMs);
+      const immediate = refreshOnVisible; refreshOnVisible = false;
+      schedule(immediate ? 0 : failures ? [5000, 10000, 20000, 30000][Math.min(failures - 1, 3)] : intervalMs);
     }
   };
   const visibility = () => {
     clearTimeout(timer);
     if (document.hidden) controller?.abort();
     else if (!running) schedule(0);
+    else refreshOnVisible = true;
   };
   document.addEventListener("visibilitychange", visibility);
   schedule(initialDelay);

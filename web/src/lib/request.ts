@@ -18,7 +18,7 @@ export async function requestJSON<T>(url: string, options: RequestOptions = {}):
   else signal?.addEventListener("abort", cancel, { once: true });
   const timer = setTimeout(() => controller.abort(new DOMException("请求超时，请重试", "TimeoutError")), timeoutMs);
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
+    const response = await fetch(url, { cache: "no-store", ...init, signal: controller.signal });
     if (!response.ok) {
       let message = `请求失败：${response.status}`;
       try {

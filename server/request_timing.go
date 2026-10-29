@@ -27,6 +27,7 @@ func requestTiming(next http.Handler) http.Handler {
   started:=time.Now(); id:=r.Header.Get("X-Request-ID")
   if !safeRequestID.MatchString(id) {id=uuid.NewString()}
   w.Header().Set("X-Request-ID",id)
+  w.Header().Set("Cache-Control","no-store")
   out:=&timingWriter{ResponseWriter:w}
   defer func(){
    status:=out.status; if status==0 {status=200}

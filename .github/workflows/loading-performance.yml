@@ -1,7 +1,7 @@
 name: loading-performance
 on:
   push:
-    branches: [main, codex/loading-performance]
+    branches: [main]
   pull_request:
     branches: [main]
 permissions:
