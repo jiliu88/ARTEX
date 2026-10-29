@@ -17,10 +17,13 @@ if '# loading-performance compression' not in s:
  s=s.replace('    listen 8443 ssl http2;', '''    listen 8443 ssl http2;
     # loading-performance compression：SSE 的 text/event-stream 不在压缩类型内。
     gzip on;
-    gzip_types application/json application/javascript text/css image/svg+xml;
+    gzip_types application/json application/javascript text/javascript text/css image/svg+xml;
     gzip_min_length 1024;
     gzip_comp_level 4;
     gzip_vary on;''',1)
+# 兼容已运行过旧脚本的配置，补齐 Go 实际返回的 JavaScript MIME。
+s=s.replace('gzip_types application/json application/javascript text/css image/svg+xml;',
+ 'gzip_types application/json application/javascript text/javascript text/css image/svg+xml;')
 # 原始 Nginx 错误包含完整 URL（SSE 查询中有令牌），不启用该输出。
 p.write_text(s)
 PY

@@ -96,6 +96,13 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 					continue
 				}
 				for _, t := range ts {
+					// Playwright exposes the screenshot capability as a separate tool. Keep
+					// it opt-in so a normal browser MCP session does not unexpectedly send
+					// image payloads to the model or consume extra tokens.
+					if m.Name == browserMCPName && isBrowserScreenshotTool(t.Name()) &&
+						(agentKey != "reporter" || !pg.GetBool(settingBrowserScreenshot, false)) {
+						continue
+					}
 					extra = append(extra, t)
 					allNames = append(allNames, t.Name())
 					serverTools[m.Name] = append(serverTools[m.Name], t.Name())
@@ -178,6 +185,11 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 		}
 		return extra, def, cleanup
 	}
+}
+
+func isBrowserScreenshotTool(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	return strings.Contains(name, "screenshot") || strings.Contains(name, "take_screenshot")
 }
 
 func idSet(ids []int64) map[int64]bool {
