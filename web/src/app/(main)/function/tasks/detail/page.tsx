@@ -39,7 +39,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { startPolling } from "@/lib/polling";
 import { api, HttpError } from "@/lib/api";
-import type { LLMProfile, Task } from "@/lib/types";
+import type { LLMProfile, Stats, Task } from "@/lib/types";
 
 import { AssetsTab } from "./_tabs/assets-tab";
 import { BroadcastTab } from "./_tabs/broadcast-tab";
@@ -210,6 +210,7 @@ function TaskDetailInner() {
   const searchParams = useSearchParams();
   const id = searchParams.get("id") ?? "";
   const [task, setTask] = React.useState<Task | null>(null);
+  const [stats, setStats] = React.useState<Stats | null>(null);
   const [paused, setPaused] = React.useState(false);
   const [loadError, setLoadError] = React.useState("");
   const [missing, setMissing] = React.useState(false);
@@ -236,7 +237,7 @@ function TaskDetailInner() {
     if (!signal.aborted) setInterceptPendingCount(count);
   }, 5000), [id]);
 
-  React.useEffect(() => { setTask(null); setLoaded(false); setMissing(false); setLoadError(""); }, [id]);
+  React.useEffect(() => { setTask(null); setStats(null); setLoaded(false); setMissing(false); setLoadError(""); }, [id]);
 
   // 首屏只依赖任务；统计失败或挂起均不会阻止主体显示。
   React.useEffect(() => {
@@ -260,6 +261,7 @@ function TaskDetailInner() {
   React.useEffect(() => startPolling(async (signal) => {
     const value = await api.stats(id, signal);
     if (signal.aborted) return;
+    setStats(value);
     const active = value.active_task;
     if (active) {
       setTask((previous) => previous ? { ...previous, in_flight: active.in_flight,
@@ -434,7 +436,7 @@ function TaskDetailInner() {
           <SessionsTab key={id} taskId={id} requestedSession={searchParams.get("session") ?? ""} />
         </TabsContent>
         <TabsContent value="overview" className="mt-0">
-          <OverviewTab taskId={id} />
+          <OverviewTab taskId={id} task={task} stats={stats} />
         </TabsContent>
         <TabsContent value="graph" className="mt-0">
           <GraphTab taskId={id} />

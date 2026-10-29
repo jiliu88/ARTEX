@@ -104,9 +104,7 @@ function StatCard({
   );
 }
 
-export function OverviewTab({ taskId }: { taskId: string }) {
-  const [task, setTask] = React.useState<Task | null>(null);
-  const [stats, setStats] = React.useState<Stats | null>(null);
+export function OverviewTab({ taskId, task, stats }: { taskId: string; task: Task; stats: Stats | null }) {
   const [intents, setIntents] = React.useState<TaskNode[]>([]);
   const [findings, setFindings] = React.useState<Finding[]>([]);
   const [coverage, setCoverage] = React.useState<{
@@ -350,14 +348,6 @@ export function OverviewTab({ taskId }: { taskId: string }) {
 
   React.useEffect(() => {
     let cancelled = false;
-    const updateTask = startPolling(async (signal) => {
-      const value = await api.task(taskId, signal);
-      if (!cancelled && !signal.aborted) setTask(value);
-    }, 5000);
-    const updateStats = startPolling(async (signal) => {
-      const value = await api.stats(taskId, signal);
-      if (!cancelled && !signal.aborted) setStats(value);
-    }, 5000);
     const updateLists = startPolling(async (signal) => {
       await Promise.allSettled([
         api.intents(taskId, signal).then((value) => { if (!cancelled) setIntents(value); }),
@@ -372,7 +362,7 @@ export function OverviewTab({ taskId }: { taskId: string }) {
     const updateScope = startPolling(loadScope, 15000);
     return () => {
       cancelled = true;
-      updateTask(); updateStats(); updateLists(); updateCoverage(); updateScope();
+      updateLists(); updateCoverage(); updateScope();
     };
   }, [taskId, loadScope, loadTokens, loadGoals, loadConstraints]);
 
