@@ -2,5 +2,6 @@ ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 ARG SOURCE_COMMIT
 LABEL org.opencontainers.image.revision=${SOURCE_COMMIT}
+ENV TZ=Asia/Shanghai
 COPY artex /app/artex
 RUN chmod 755 /app/artex
