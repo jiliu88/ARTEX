@@ -26,7 +26,10 @@ const fixture={id:'1',name:'合成加载回归任务',description:'合成加载�
 await page.route('**/api/**',async route=>{
  const url=new URL(route.request().url());
  if(url.pathname==='/api/stats' && mode==='stats-hang') {await new Promise(r=>setTimeout(r,17000));await route.abort().catch(()=>{});return;}
+ if(url.pathname==='/api/tasks/2') {await route.fulfill({json:{...fixture,id:'2',name:'第二个合成任务',description:'第二个合成任务'}});return;}
  if(url.pathname==='/api/tasks/1') {
+  if(mode==='offline'){await route.abort('internetdisconnected');return;}
+  if(mode==='401'){await route.fulfill({status:401,json:{error:'未授权'}});return;}
   if(mode==='task-hang'){await new Promise(r=>setTimeout(r,17000));await route.abort().catch(()=>{});return;}
   if(mode==='404'||mode==='500'){await route.fulfill({status:Number(mode),json:{error:mode==='404'?'task not found':'合成服务器故障'}});return;}
   await route.fulfill({json:fixture});return;
@@ -42,7 +45,18 @@ try {
  mode='500';await page.reload();await page.getByRole('button',{name:'重试',exact:true}).waitFor();
  mode='ok';await page.getByRole('button',{name:'重试',exact:true}).click();await page.getByText('合成加载回归任务',{exact:true}).first().waitFor();
  console.log('PASS:404/500区分及重试恢复');
+ mode='offline';await page.getByText('刷新失败：',{exact:false}).waitFor({timeout:8000});
+ assert.ok(await page.getByText('合成加载回归任务',{exact:true}).first().isVisible());
+ mode='ok';await page.getByRole('button',{name:'重试',exact:true}).click();
+ await page.getByText('刷新失败：',{exact:false}).waitFor({state:'hidden',timeout:5000});
+ console.log('PASS:断网保留内容并可恢复');
  mode='task-hang';await page.reload();await page.getByRole('button',{name:'重试',exact:true}).waitFor({timeout:16500});
  console.log('PASS:挂起任务15秒后停止加载并允许重试');
+ await page.evaluate(()=>history.pushState({},'', '/function/tasks/detail/?id=2&tab=assets'));
+ await page.getByText('第二个合成任务',{exact:true}).first().waitFor({timeout:5000});
+ console.log('PASS:任务切换不显示旧请求结果');
+ mode='401';await page.goto(url);await page.waitForURL('**/login/**',{timeout:5000});
+ assert.equal(await page.evaluate(()=>localStorage.getItem('artex_token')),null);
+ console.log('PASS:401跳转登录并清除失效会话');
  assert.deepEqual(errors,[]);
 }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

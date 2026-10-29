@@ -265,7 +265,7 @@ function TaskDetailInner() {
       setTask((previous) => previous ? { ...previous, in_flight: active.in_flight,
         goals_total: active.goals_total, goals_met: active.goals_met,
         engine_mode: value.engine_mode ?? active.engine_mode, paused: active.paused } : previous);
-      setPaused(active.paused);
+      if (typeof active.paused === "boolean") setPaused(active.paused);
     }
   }, 5000), [id]);
 
