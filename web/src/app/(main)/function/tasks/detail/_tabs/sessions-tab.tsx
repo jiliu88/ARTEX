@@ -1070,15 +1070,15 @@ export function SessionsTab({ taskId, requestedSession = "" }: { taskId: string;
   const loadedIntentIDs = [...new Set([...intents, ...olderIntents].map((item) => item.id))].sort().join(",");
   React.useEffect(() => {
     let active = true;
-    const load = (signal: AbortSignal) =>
-      api
-        .taskIntentAssets(taskId, loadedIntentIDs ? loadedIntentIDs.split(",") : [], signal)
-        .then((assets) => {
-          if (active) setIntentAssets(assets);
-        })
-        .catch(() => {
-          // The next poll retries; Worker controls and transcripts remain available.
-        });
+    const load = async (signal: AbortSignal) => {
+      const ids = loadedIntentIDs ? loadedIntentIDs.split(",") : [];
+      const assets: Awaited<ReturnType<typeof api.taskIntentAssets>> = [];
+      // 限制单个 URL 长度，同时保留已加载历史页的全部资产关联。
+      for (let offset = 0; offset < ids.length; offset += 100) {
+        assets.push(...await api.taskIntentAssets(taskId, ids.slice(offset, offset + 100), signal));
+      }
+      if (active && !signal.aborted) setIntentAssets(assets);
+    };
     const timer = startPolling(load, 5000);
     return () => {
       active = false;
