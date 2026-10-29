@@ -55,7 +55,7 @@ try {
  await page.evaluate(()=>history.pushState({},'', '/function/tasks/detail/?id=2&tab=assets'));
  await page.getByText('第二个合成任务',{exact:true}).first().waitFor({timeout:5000});
  console.log('PASS:任务切换不显示旧请求结果');
- mode='401';await page.goto(url);await page.waitForURL('**/login/**',{timeout:5000});
+ mode='401';await page.goto(url);await page.waitForURL(/\/login\/?$/,{timeout:5000});
  assert.equal(await page.evaluate(()=>localStorage.getItem('artex_token')),null);
  console.log('PASS:401跳转登录并清除失效会话');
  assert.deepEqual(errors,[]);
