@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { startPolling } from "@/lib/polling";
 
 import Link from "next/link";
 
@@ -184,17 +185,16 @@ export default function DashboardPage() {
 
   React.useEffect(() => {
     let alive = true;
-    const load = async () => {
+    const load = async (signal: AbortSignal) => {
       try {
-        const next = await api.systemMetrics();
+        const next = await api.systemMetrics(signal);
         if (alive) setSystemMetrics(next);
       } catch {
         /* retry on the next interval */
       }
     };
-    void load();
-    const timer = setInterval(load, 5000);
-    return () => { alive = false; clearInterval(timer); };
+    const stop = startPolling(load, 5000);
+    return () => { alive = false; stop(); };
   }, []);
 
   // The task list is the most expensive dashboard source. Poll it independently

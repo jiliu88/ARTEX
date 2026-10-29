@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { startPolling } from "@/lib/polling";
 
 import { useRouter } from "next/navigation";
 
@@ -207,8 +208,8 @@ export function TrafficHistory({ taskId }: { taskId?: string }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: reloadTick is an explicit manual-refetch trigger.
   React.useEffect(() => {
     let alive = true;
-    const load = () => {
-      api
+    const load = async (signal: AbortSignal) => {
+      const trafficRequest = api
         .traffic(page, size, hostQ, method, queryQ, {
           taskId,
           body: bodyQ,
@@ -218,16 +219,17 @@ export function TrafficHistory({ taskId }: { taskId?: string }) {
           respMax: respMaxQ,
           sort: sort.field,
           order: sort.direction,
-        })
+        }, signal)
         .then((r) => {
           if (alive) setTraffic(r);
         })
         .catch(() => {
           // Keep the last successful snapshot during transient refresh failures.
         });
+      let hostsRequest: Promise<void> | undefined;
       if (!taskScoped) {
-        api
-          .trafficHosts()
+        hostsRequest = api
+          .trafficHosts(undefined, signal)
           .then((r) => {
             if (alive) setHosts(r.hosts ?? []);
           })
@@ -237,15 +239,13 @@ export function TrafficHistory({ taskId }: { taskId?: string }) {
       } else if (alive) {
         setHosts([]);
       }
+      await Promise.allSettled([trafficRequest, hostsRequest]);
     };
-    load();
-    const t = setInterval(() => {
-      if (page !== 0) return; // only auto-refresh the newest page
-      load();
-    }, 5000);
+    // 历史页保持当前页；隐藏时暂停，重新可见时刷新，所有请求结束后再开始下一轮。
+    const stop = startPolling(load, page === 0 ? 5000 : 2147483647);
     return () => {
       alive = false;
-      clearInterval(t);
+      stop();
     };
   }, [page, size, hostQ, method, queryQ, bodyQ, pathQ, statusFilter, respMinQ, respMaxQ, sort, reloadTick, taskId, taskScoped]);
 

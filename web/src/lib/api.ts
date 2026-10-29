@@ -283,7 +283,7 @@ function schedulePayload(input: ScheduleInput) {
 export const api = {
   // 后端应用版本号（release 时由 ldflags 注入，默认 "dev"）。
   health: () => get<{ ok: boolean; service: string; version: string }>("/health"),
-  systemMetrics: () => get<SystemMetrics>("/system/metrics"),
+  systemMetrics: (signal?: AbortSignal) => get<SystemMetrics>("/system/metrics", signal),
 
   // ---- auth ----
   authStatus: () => get<{ initialized: boolean }>("/auth/status"),
@@ -910,6 +910,7 @@ export const api = {
       sort?: string;
       order?: string;
     } = {},
+    signal?: AbortSignal,
   ) =>
     get<TrafficResp>(
       `/traffic?page=${page}&size=${size}` +
@@ -923,11 +924,11 @@ export const api = {
         (opts.respMin ? `&resp_min=${encodeURIComponent(opts.respMin)}` : "") +
         (opts.respMax ? `&resp_max=${encodeURIComponent(opts.respMax)}` : "") +
         (opts.sort ? `&sort=${encodeURIComponent(opts.sort)}` : "") +
-        (opts.order ? `&order=${encodeURIComponent(opts.order)}` : ""),
+        (opts.order ? `&order=${encodeURIComponent(opts.order)}` : ""), signal,
     ),
   trafficExchange: (id: string) => get<TrafficDetail>(`/traffic/exchange?id=${encodeURIComponent(id)}`),
-  trafficHosts: (taskId?: string) =>
-    get<{ hosts: TrafficHost[] }>(`/traffic/hosts${taskId ? `?task_id=${encodeURIComponent(taskId)}` : ""}`),
+  trafficHosts: (taskId?: string, signal?: AbortSignal) =>
+    get<{ hosts: TrafficHost[] }>(`/traffic/hosts${taskId ? `?task_id=${encodeURIComponent(taskId)}` : ""}`, signal),
   trafficDeleteHost: (host: string) => del<{ deleted: number }>(`/traffic?host=${encodeURIComponent(host)}`),
   trafficDeleteHosts: (hosts: string[]) => del<{ deleted: number }>(`/traffic/hosts`, { hosts }),
   // Purges every exchange and compacts the index; `reclaimed` is the bytes of

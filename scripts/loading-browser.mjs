@@ -27,6 +27,10 @@ page.on('pageerror',e=>errors.push(e.message));
 const fixture={id:'1',name:'合成加载回归任务',description:'合成加载回归任务',goal:'验证加载',status:'paused',paused:true,created_at:1,worker_count:1,goals_total:0,goals_met:0,source_tasks:[],llm_profile_ids:[]};
 await page.route('**/api/**',async route=>{
  const url=new URL(route.request().url());
+ if(url.pathname==='/api/traffic') {
+  if(mode==='traffic-hang'){await new Promise(r=>setTimeout(r,17000));await route.abort().catch(()=>{});return;}
+  await route.fulfill({json:{enabled:true,exchanges:[],total:0,page:0,size:100}});return;
+ }
  if(url.pathname==='/api/stats' && mode==='stats-hang') {await new Promise(r=>setTimeout(r,17000));await route.abort().catch(()=>{});return;}
  if(url.pathname==='/api/tasks/2') {await route.fulfill({json:{...fixture,id:'2',name:'第二个合成任务',description:'第二个合成任务'}});return;}
  if(url.pathname==='/api/tasks/1') {
@@ -57,6 +61,17 @@ try {
  await page.evaluate(()=>history.pushState({},'', '/function/tasks/detail/?id=2&tab=assets'));
  await page.getByText('第二个合成任务',{exact:true}).first().waitFor({timeout:5000});
  console.log('PASS:任务切换不显示旧请求结果');
+ const trafficActive=new Set();let trafficMax=0,trafficStarts=0;
+ page.on('request',request=>{if(new URL(request.url()).pathname==='/api/traffic'){trafficActive.add(request);trafficStarts++;trafficMax=Math.max(trafficMax,trafficActive.size);}});
+ const trafficEnded=request=>trafficActive.delete(request);
+ page.on('requestfinished',trafficEnded);page.on('requestfailed',trafficEnded);
+ mode='traffic-hang';
+ const trafficFailed=page.waitForEvent('requestfailed',{predicate:request=>new URL(request.url()).pathname==='/api/traffic',timeout:17000});
+ await page.goto(url.replace('tab=assets','tab=traffic'));await trafficFailed;
+ assert.equal(trafficStarts,1);assert.equal(trafficMax,1);
+ mode='ok';await page.waitForResponse(response=>new URL(response.url()).pathname==='/api/traffic'&&response.status()===200,{timeout:7000});
+ assert.equal(trafficMax,1);
+ console.log('PASS:新增任务流量挂起时并发不超过1且超时后恢复');
  mode='401';await page.goto(url);await page.waitForURL(/\/login\/?$/,{timeout:5000});
  assert.equal(await page.evaluate(()=>localStorage.getItem('artex_token')),null);
  console.log('PASS:401跳转登录并清除失效会话');
