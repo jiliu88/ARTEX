@@ -37,8 +37,9 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { api } from "@/lib/api";
-import type { LLMProfile, Task } from "@/lib/types";
+import { startPolling } from "@/lib/polling";
+import { api, HttpError } from "@/lib/api";
+import type { LLMProfile, Stats, Task } from "@/lib/types";
 
 import { AssetsTab } from "./_tabs/assets-tab";
 import { BroadcastTab } from "./_tabs/broadcast-tab";
@@ -209,7 +210,11 @@ function TaskDetailInner() {
   const searchParams = useSearchParams();
   const id = searchParams.get("id") ?? "";
   const [task, setTask] = React.useState<Task | null>(null);
+  const [stats, setStats] = React.useState<Stats | null>(null);
   const [paused, setPaused] = React.useState(false);
+  const [loadError, setLoadError] = React.useState("");
+  const [missing, setMissing] = React.useState(false);
+  const [retry, setRetry] = React.useState(0);
   const [loaded, setLoaded] = React.useState(false);
   const requestedTab = searchParams.get("tab") ?? "sessions";
   const [tab, setTab] = React.useState(TABS.some((item) => item.value === requestedTab) ? requestedTab : "sessions");
@@ -227,59 +232,46 @@ function TaskDetailInner() {
       .catch(() => setProfiles([]));
   }, []);
 
-  React.useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api
-        .interceptTask(id)
-        .then((rows) => {
-          if (alive) setInterceptPendingCount(rows.filter((r) => r.status === "pending").length);
-        })
-        .catch(() => {
-          // Polling is best-effort; the next interval retries automatically.
-        });
-    void load();
-    const t = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [id]);
+  React.useEffect(() => startPolling(async (signal) => {
+    const count = await api.interceptPendingCount(id, signal);
+    if (!signal.aborted) setInterceptPendingCount(count);
+  }, 5000), [id]);
 
-  const taskLoadInFlight = React.useRef<string | null>(null);
-  const load = React.useCallback(() => {
-    if (taskLoadInFlight.current === id) return;
-    taskLoadInFlight.current = id;
-    Promise.all([api.task(id), api.stats(id).catch(() => null)])
-      .then(([task, s]) => {
-        if (taskLoadInFlight.current !== id) return;
-        const base = { ...task };
-        const at = s?.active_task;
-        if (at) {
-          base.in_flight = at.in_flight;
-          base.goals_total = at.goals_total;
-          base.goals_met = at.goals_met;
-          base.engine_mode = s?.engine_mode ?? at.engine_mode;
-          base.paused = at.paused;
-        }
-        setTask(base);
-        setPaused(at?.paused ?? base.paused ?? false);
-      })
-      .catch(() => {
-        // Keep the last rendered task state during a transient poll failure.
-      })
-      .finally(() => {
-        if (taskLoadInFlight.current === id) {
-          taskLoadInFlight.current = null;
-          setLoaded(true);
-        }
-      });
-  }, [id]);
+  React.useEffect(() => { setTask(null); setStats(null); setLoaded(false); setMissing(false); setLoadError(""); }, [id]);
+
+  // 首屏只依赖任务；统计失败或挂起均不会阻止主体显示。
   React.useEffect(() => {
-    load();
-    const timer = setInterval(load, 5000);
-    return () => clearInterval(timer);
-  }, [load]);
+    return startPolling(async (signal) => {
+      try {
+        const value = await api.task(id, signal);
+        if (!signal.aborted) {
+          setTask(value); setPaused(value.paused ?? false);
+          setLoadError(""); setMissing(false); setLoaded(true);
+        }
+      } catch (error) {
+        if (signal.aborted) return;
+        setLoaded(true);
+        setMissing(error instanceof HttpError && error.status === 404);
+        setLoadError(error instanceof Error ? error.message : "加载任务失败");
+        throw error;
+      }
+    }, 5000);
+  }, [id, retry]);
+
+  React.useEffect(() => startPolling(async (signal) => {
+    const value = await api.stats(id, signal);
+    if (signal.aborted) return;
+    setStats(value);
+    const active = value.active_task;
+    if (active) {
+      setTask((previous) => previous ? { ...previous, in_flight: active.in_flight,
+        goals_total: active.goals_total, goals_met: active.goals_met,
+        engine_mode: value.engine_mode ?? active.engine_mode, paused: active.paused } : previous);
+      if (typeof active.paused === "boolean") setPaused(active.paused);
+    }
+  }, 5000), [id]);
+
+  const load = () => setRetry((previous) => previous + 1);
 
   async function togglePause() {
     if (task && ["done", "failed", "timeout"].includes(task.status)) return;
@@ -309,7 +301,8 @@ function TaskDetailInner() {
   if (!task) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center">
-        <p className="text-muted-foreground">{loaded ? `任务 ${id} 已被删除、归档或不存在` : "加载中…"}</p>
+        <p className="text-muted-foreground">{missing ? `任务 ${id} 已被删除、归档或不存在` : loadError || "加载中…"}</p>
+        {loaded && !missing && <Button onClick={load}>重试</Button>}
         {loaded && (
           <Button asChild variant="outline">
             <Link href="/function/tasks">
@@ -365,6 +358,7 @@ function TaskDetailInner() {
       }}
       className="flex flex-1 flex-col gap-0"
     >
+      {loadError && <Alert><AlertDescription>刷新失败：{loadError} <Button variant="link" onClick={load}>重试</Button></AlertDescription></Alert>}
       {/* Top fixed area */}
       <header className="sticky top-0 z-10 flex flex-col gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur lg:px-6">
         <div className="flex items-center gap-2">
@@ -442,7 +436,7 @@ function TaskDetailInner() {
           <SessionsTab key={id} taskId={id} requestedSession={searchParams.get("session") ?? ""} />
         </TabsContent>
         <TabsContent value="overview" className="mt-0">
-          <OverviewTab taskId={id} />
+          <OverviewTab taskId={id} task={task} stats={stats} />
         </TabsContent>
         <TabsContent value="graph" className="mt-0">
           <GraphTab taskId={id} />

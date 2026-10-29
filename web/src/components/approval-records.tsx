@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { startPolling } from "@/lib/polling";
 
 import {
   BotIcon,
@@ -793,7 +794,7 @@ export function ApprovalRecords({ taskId }: { taskId?: string }) {
   }, [taskId]);
 
   const load = React.useCallback(
-    async (manual = false) => {
+    async (manual = false, signal?: AbortSignal) => {
       const id = ++request.current;
       if (manual) setRefreshing(true);
       try {
@@ -802,9 +803,9 @@ export function ApprovalRecords({ taskId }: { taskId?: string }) {
         // fill the page or a filter would hide them.
         const [history, pending] = await Promise.allSettled([
           taskId
-            ? api.interceptTaskPage(taskId, page, pageSize, filter)
-            : api.interceptHistoryPage(page, pageSize, filter),
-          api.interceptPending(),
+            ? api.interceptTaskPage(taskId, page, pageSize, filter, signal)
+            : api.interceptHistoryPage(page, pageSize, filter, signal),
+          api.interceptPending(taskId ?? "", signal),
         ]);
         if (id !== request.current) return;
         if (history.status === "fulfilled") {
@@ -836,11 +837,10 @@ export function ApprovalRecords({ taskId }: { taskId?: string }) {
   latestLoad.current = load;
 
   React.useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), 5000);
+    const stop = startPolling((signal) => load(false, signal), 5000);
     return () => {
       request.current++;
-      clearInterval(timer);
+      stop();
     };
   }, [load]);
 

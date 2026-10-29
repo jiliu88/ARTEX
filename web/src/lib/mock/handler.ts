@@ -1905,7 +1905,8 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
         },
       ];
     });
-    return { assets };
+    const ids = q.has("intent_ids") ? new Set((q.get("intent_ids") ?? "").split(",")) : null;
+    return { assets: ids ? assets.filter((item) => ids.has(String(item.intent_id))) : assets };
   }
 
   // ── companies ──
@@ -2554,8 +2555,10 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   if (path === "/intercept/rules" && m === "GET") return { rules: D.interceptRules };
   if (seg[0] === "intercept" && seg[1] === "rules" && seg[3] === "toggle")
     return { ok: true, enabled: b.enabled ?? true };
+  if (path === "/intercept/pending/count" && m === "GET")
+    return { count: mockInterceptHistory.filter((r) => r.status === "pending" && (!q.get("task") || r.task_id === q.get("task"))).length };
   if (path === "/intercept/pending" && m === "GET")
-    return { pending: mockInterceptHistory.filter((r) => r.status === "pending") };
+    return { pending: mockInterceptHistory.filter((r) => r.status === "pending" && (!q.get("task") || r.task_id === q.get("task"))) };
   if (seg[0] === "intercept" && seg[1] === "pending" && seg[3] === "decide") {
     const id = Number(seg[2]);
     const row = mockInterceptHistory.find((r) => r.id === id) ?? mockInterceptPending.find((r) => r.id === id);

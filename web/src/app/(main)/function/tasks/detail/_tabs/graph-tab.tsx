@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { startPolling } from "@/lib/polling";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { ExplorationGraph } from "@/components/exploration-graph";
@@ -17,9 +18,9 @@ export function GraphTab({ taskId }: { taskId: string }) {
   React.useEffect(() => {
     let cancelled = false;
     sigRef.current = ""; // 换任务:强制下一次刷新
-    const load = () => {
-      api
-        .explorationGraph(taskId)
+    const load = (signal: AbortSignal) => {
+      return api
+        .explorationGraph(taskId, signal)
         .then((g) => {
           if (cancelled) return;
           const ns = g.nodes ?? [];
@@ -37,11 +38,10 @@ export function GraphTab({ taskId }: { taskId: string }) {
           /* keep last good data */
         });
     };
-    load();
-    const timer = setInterval(load, 20000);
+    const timer = startPolling(load, 20000);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      timer();
     };
   }, [taskId]);
 

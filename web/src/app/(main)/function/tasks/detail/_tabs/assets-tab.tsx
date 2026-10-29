@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { startPolling } from "@/lib/polling";
 
 import {
   ChevronLeftIcon,
@@ -380,17 +381,23 @@ export function AssetsTab({ taskId }: { taskId: string }) {
     let active = true;
     const dsl = query.trim();
     const request = ++assetsRequestRef.current;
-    const load = async () => {
+    const load = async (signal: AbortSignal) => {
       setLoading(true);
       try {
         // The search always stays within this task's assets: taskAssets and
         // searchTaskAssets both pin task_id server-side.
-        const [current, nextCounts] = await Promise.all([
+        const results = await Promise.allSettled([
           dsl
-            ? api.searchTaskAssets(taskId, dsl, tab, size, page * size)
-            : api.taskAssets(taskId, tab, size, page * size),
-          api.assetCounts(taskId),
+            ? api.searchTaskAssets(taskId, dsl, tab, size, page * size, signal)
+            : api.taskAssets(taskId, tab, size, page * size, signal),
+          api.assetCounts(taskId, signal),
         ]);
+        // 等待本轮所有请求结束，避免一个失败后另一个仍在传输时启动下一轮。
+        const [assetsResult, countsResult] = results;
+        if (assetsResult.status === "rejected") throw assetsResult.reason;
+        if (countsResult.status === "rejected") throw countsResult.reason;
+        const current = assetsResult.value;
+        const nextCounts = countsResult.value;
         if (!active || assetsRequestRef.current !== request) return;
         setRows(current.assets);
         setTotal(current.total);
@@ -414,12 +421,10 @@ export function AssetsTab({ taskId }: { taskId: string }) {
       }
     };
     // Debounce DSL keystrokes; plain (re)loads and polling run immediately.
-    const debounce = setTimeout(() => void load(), dsl ? 400 : 0);
-    const timer = setInterval(() => void load(), 10_000);
+    const stop = startPolling(load, 10_000, dsl ? 400 : 0);
     return () => {
       active = false;
-      clearTimeout(debounce);
-      clearInterval(timer);
+      stop();
     };
   }, [page, query, refreshKey, size, tab, taskId]);
 

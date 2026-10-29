@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { startPolling } from "@/lib/polling";
 
 import {
   ActivityIcon,
@@ -103,9 +104,7 @@ function StatCard({
   );
 }
 
-export function OverviewTab({ taskId }: { taskId: string }) {
-  const [task, setTask] = React.useState<Task | null>(null);
-  const [stats, setStats] = React.useState<Stats | null>(null);
+export function OverviewTab({ taskId, task, stats }: { taskId: string; task: Task; stats: Stats | null }) {
   const [intents, setIntents] = React.useState<TaskNode[]>([]);
   const [findings, setFindings] = React.useState<Finding[]>([]);
   const [coverage, setCoverage] = React.useState<{
@@ -145,27 +144,27 @@ export function OverviewTab({ taskId }: { taskId: string }) {
   const [editConText, setEditConText] = React.useState("");
   const [editConKind, setEditConKind] = React.useState<TaskConstraint["kind"]>("deny");
 
-  const loadTokens = React.useCallback(async () => {
+  const loadTokens = React.useCallback(async (signal?: AbortSignal) => {
     try {
-      const resp = await api.tokensByModel(taskId);
+      const resp = await api.tokensByModel(taskId, signal);
       setModelTokens(resp.models);
     } catch {
       // 忽略：无 PG 时接口报错，卡片自然为空
     }
   }, [taskId]);
 
-  const loadScope = React.useCallback(async () => {
+  const loadScope = React.useCallback(async (signal?: AbortSignal) => {
     try {
-      const resp = await api.taskScope(taskId);
+      const resp = await api.taskScope(taskId, signal);
       setScope(resp.scope);
     } catch {
       // 忽略：无 asset store 时接口 503，范围卡片自然为空
     }
   }, [taskId]);
 
-  const loadGoals = React.useCallback(async () => {
+  const loadGoals = React.useCallback(async (signal?: AbortSignal) => {
     try {
-      const resp = await api.taskGoals(taskId);
+      const resp = await api.taskGoals(taskId, signal);
       setGoals(resp.goals);
     } catch {
       // 忽略：瞬时错误，下次轮询重试
@@ -226,9 +225,9 @@ export function OverviewTab({ taskId }: { taskId: string }) {
     }
   };
 
-  const loadConstraints = React.useCallback(async () => {
+  const loadConstraints = React.useCallback(async (signal?: AbortSignal) => {
     try {
-      const resp = await api.taskConstraints(taskId);
+      const resp = await api.taskConstraints(taskId, signal);
       setConstraints(resp.constraints);
     } catch {
       // 忽略：瞬时错误，下次轮询重试
@@ -349,66 +348,21 @@ export function OverviewTab({ taskId }: { taskId: string }) {
 
   React.useEffect(() => {
     let cancelled = false;
-    let loading = false;
-
-    const load = async () => {
-      if (loading) return;
-      loading = true;
-      try {
-        const [taskResp, statsResp, intentsResp, findingsResp] = await Promise.all([
-          api.task(taskId),
-          api.stats(taskId),
-          api.intents(taskId),
-          api.findings(taskId),
-        ]);
-        if (cancelled) return;
-        const activeTask = statsResp.active_task;
-        setTask(
-          activeTask
-            ? {
-                ...taskResp,
-                in_flight: activeTask.in_flight,
-                goals_total: activeTask.goals_total,
-                goals_met: activeTask.goals_met,
-                engine_mode: statsResp.engine_mode ?? activeTask.engine_mode,
-                paused: activeTask.paused,
-              }
-            : taskResp,
-        );
-        setStats(statsResp);
-        setIntents(intentsResp);
-        setFindings(findingsResp);
-        // coverage is independent + may 503 when no asset store — fetch separately so
-        // its failure never blocks the others.
-        api
-          .taskCoverage(taskId)
-          .then((c) => {
-            if (!cancelled) setCoverage(c);
-          })
-          .catch(() => {
-            // A transient coverage failure is retried by the next poll.
-          });
-      } catch {
-        // transient errors are ignored; the next poll will retry
-      } finally {
-        loading = false;
-      }
-    };
-
-    void load();
-    void loadScope();
-    void loadTokens();
-    void loadGoals();
-    void loadConstraints();
-    const timer = setInterval(() => {
-      void load();
-      void loadTokens();
-      void loadGoals();
-      void loadConstraints();
-    }, 3000);
+    const updateLists = startPolling(async (signal) => {
+      await Promise.allSettled([
+        api.intents(taskId, signal).then((value) => { if (!cancelled) setIntents(value); }),
+        api.findings(taskId, signal).then((value) => { if (!cancelled) setFindings(value); }),
+        loadTokens(signal), loadGoals(signal), loadConstraints(signal),
+      ]);
+    }, 5000);
+    const updateCoverage = startPolling(async (signal) => {
+      const value = await api.taskCoverage(taskId, signal);
+      if (!cancelled && !signal.aborted) setCoverage(value);
+    }, 15000);
+    const updateScope = startPolling(loadScope, 15000);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      updateLists(); updateCoverage(); updateScope();
     };
   }, [taskId, loadScope, loadTokens, loadGoals, loadConstraints]);
 

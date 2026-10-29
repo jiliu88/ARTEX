@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { startPolling } from "@/lib/polling";
 
 import {
   ArrowDownIcon,
@@ -484,9 +485,9 @@ export function BroadcastTab({ taskId }: { taskId: string }) {
       baselineRef.current = null;
       setPending(0);
     }
-    const load = () =>
+    const load = (signal: AbortSignal) =>
       api
-        .explorationNodes(taskId, { page, size, kinds, q: query, order })
+        .explorationNodes(taskId, { page, size, kinds, q: query, order }, signal)
         .then((r) => {
           if (!alive) return;
           // 直播位每轮都刷新;其它位置只渲染第一次,之后轮询仅更新未读计数。
@@ -513,16 +514,17 @@ export function BroadcastTab({ taskId }: { taskId: string }) {
         .catch(() => {
           // 轮询是尽力而为:保留上一次成功的播报内容,下一轮自动重试。
         });
-    void load();
+    const stop = startPolling(load, live ? POLL_MS : 2147483647);
     if (!live) {
       return () => {
         alive = false;
+        stop();
       };
     }
-    const timer = setInterval(load, POLL_MS);
+
     return () => {
       alive = false;
-      clearInterval(timer);
+      stop();
     };
   }, [taskId, page, size, kinds, query, order, live, atLive]);
 

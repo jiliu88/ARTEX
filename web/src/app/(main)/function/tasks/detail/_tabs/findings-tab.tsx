@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { startPolling } from "@/lib/polling";
 
 import Link from "next/link";
 
@@ -152,9 +153,9 @@ export function FindingsTab({ taskId }: { taskId: string }) {
 
   React.useEffect(() => {
     let active = true;
-    const load = () => {
-      api
-        .findings(taskId)
+    const load = (signal: AbortSignal) => {
+      return api
+        .findings(taskId, signal)
         .then((fs) => {
           if (active) setFindings(fs);
         })
@@ -162,11 +163,10 @@ export function FindingsTab({ taskId }: { taskId: string }) {
           // Keep the last successful snapshot during transient refresh failures.
         });
     };
-    load();
-    const t = setInterval(load, 3000);
+    const t = startPolling(load, 3000);
     return () => {
       active = false;
-      clearInterval(t);
+      t();
     };
   }, [taskId]);
 
