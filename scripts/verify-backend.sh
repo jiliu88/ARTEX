@@ -2,12 +2,19 @@
 set -euo pipefail
 postgres_container=$1
 
+# 当前套件通过后，Server 仍可能需要基线比较，因此按需准备且只准备一次。
+prepare_baseline() {
+  if [ ! -d "$RUNNER_TEMP/artex-baseline" ]; then
+    git fetch --depth=1 origin "$ARTEX_REGRESSION_BASE"
+    git worktree add --detach "$RUNNER_TEMP/artex-baseline" FETCH_HEAD
+  fi
+}
+
 # DB 用例不启动引擎，保留整套执行并逐项核对已存在的失败。
 if go test ./db -count=1 -v > backend-tests.log 2>&1; then
   echo 'database suite passed'
 else
-  git fetch --depth=1 origin "$ARTEX_REGRESSION_BASE"
-  git worktree add --detach "$RUNNER_TEMP/artex-baseline" FETCH_HEAD
+  prepare_baseline
   docker exec "$postgres_container" createdb -U artex_test artex_baseline_test
   (cd "$RUNNER_TEMP/artex-baseline" && ARTEX_PG_DSN='postgres://artex_test:synthetic_ci_only@127.0.0.1:5432/artex_baseline_test?sslmode=disable' go test ./db -count=1 -v -run '^(TestInterceptApprovalFilters|TestSideTaskArchiveVersions)$') > baseline-tests.log 2>&1 || true
   python3 - <<'PY'
@@ -37,6 +44,7 @@ while IFS= read -r name; do
     # 只接受固定修复前提交在相同隔离条件下具有相同断言信息的失败。
     baseline_binary="$RUNNER_TEMP/artex-baseline-server.test"
     if [ ! -f "$baseline_binary" ]; then
+      prepare_baseline
       (cd "$RUNNER_TEMP/artex-baseline" && go test -c -o "$baseline_binary" ./server)
     fi
     baseline_database="artex_baseline_server_${index}"
