@@ -409,6 +409,22 @@ func TestSideTaskSyntheticSnapshotIsOverriddenByCheckpoint(t *testing.T) {
 
 func TestSideTaskContextModelUnavailableIsDistinct(t *testing.T) {
 	f := newSideHTTPFixture(t)
+	// 用例单独运行时也自行准备默认配置，不依赖其他测试留下的模型。
+	if active, err := f.m.pg.ActiveProfile(); err != nil {
+		t.Fatal(err)
+	} else if active == nil {
+		profileID, err := f.m.pg.SaveProfile(&db.LLMProfile{Name: "side-model-unavailable-fixture", Format: "openai", Model: "fixture", APIKey: "synthetic-test-key"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_, _ = f.m.pg.Exec(`UPDATE llm_profiles SET is_default=false WHERE id=$1`, profileID)
+			_ = f.m.pg.DeleteProfile(profileID)
+		})
+		if err := f.m.pg.SetActiveProfile(profileID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	task, err := f.m.CreateTask("model unavailable", "still has material", nil, 0, 0)
 	if err != nil {
 		t.Fatal(err)
