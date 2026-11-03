@@ -13,17 +13,32 @@ const compiled = ts.transpileModule(fs.readFileSync(path.join(__dirname, "api.ts
 
 function client(payload) {
   const exports = {};
-  vm.runInNewContext(compiled, {
+  const modules = {};
+  const context = {
     exports,
     process: { env: {} },
     URLSearchParams,
+    AbortController, DOMException, setTimeout, clearTimeout,
     require: (id) => {
       if (id === "@/lib/mock/enabled") return { MOCK: false };
       if (id === "@/lib/mock/handler") return { mockHandle: () => assert.fail("unexpected demo request") };
+      // 使用真实请求与轮询模块，保留本分叉的取消和超时语义。
+      if (id === "./request" || id === "./polling") {
+        if (!modules[id]) {
+          modules[id] = {};
+          const source = fs.readFileSync(path.join(__dirname, `${id}.ts`), "utf8");
+          const code = ts.transpileModule(source, {
+            compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+          }).outputText;
+          vm.runInNewContext(code, { ...context, exports: modules[id] });
+        }
+        return modules[id];
+      }
       throw new Error(`Unexpected runtime import: ${id}`);
     },
     fetch: async () => ({ ok: true, status: 200, json: async () => payload }),
-  });
+  };
+  vm.runInNewContext(compiled, context);
   return exports.api;
 }
 

@@ -11,19 +11,34 @@ const compiled = ts.transpileModule(fs.readFileSync(path.join(__dirname, "api.ts
 
 function client(fetch) {
   const exports = {};
-  vm.runInNewContext(compiled, {
+  const modules = {};
+  const context = {
     exports,
     process: { env: {} },
     URLSearchParams,
     window: {},
     localStorage: { getItem: () => "test-admin-token" },
+    AbortController, DOMException, setTimeout, clearTimeout,
     require: (id) => {
       if (id === "@/lib/mock/enabled") return { MOCK: false };
       if (id === "@/lib/mock/handler") return { mockHandle: () => assert.fail("unexpected demo request") };
+      // 定制请求层仍使用真实代码，验证版本接口经过超时与认证封装后的行为。
+      if (id === "./request" || id === "./polling") {
+        if (!modules[id]) {
+          modules[id] = {};
+          const source = fs.readFileSync(path.join(__dirname, `${id}.ts`), "utf8");
+          const code = ts.transpileModule(source, {
+            compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+          }).outputText;
+          vm.runInNewContext(code, { ...context, exports: modules[id] });
+        }
+        return modules[id];
+      }
       throw new Error(`Unexpected runtime import: ${id}`);
     },
     fetch,
-  });
+  };
+  vm.runInNewContext(compiled, context);
   return exports.api;
 }
 
