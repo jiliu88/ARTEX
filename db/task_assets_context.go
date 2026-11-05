@@ -21,10 +21,28 @@ context_tasks AS (
   WHERE relation.task_id=$1
 )`
 
-// 先筛选范围，再分支匹配，使各分支能独立使用索引与连接策略。
+// 每次查询读取当前任务的共享设置；直接来源只贡献资产，不继承其共享权限。
+const taskAssetVisibilityCTE = `,
+visible_assets AS (
+  SELECT a.id FROM assets a
+  WHERE EXISTS (
+    SELECT 1 FROM tasks current
+    WHERE current.id=$1 AND current.deleted_at IS NULL AND current.share_global_assets
+  )
+  OR EXISTS (SELECT 1 FROM context_tasks ctx WHERE ctx.task_id=ANY(a.task_ids))
+  OR EXISTS (
+    SELECT 1 FROM exploration_anchors anchor
+    JOIN exploration_nodes node ON node.id=anchor.node_id
+    JOIN context_tasks ctx ON ctx.exploration_id=node.exploration_id
+    WHERE anchor.asset_id=a.id
+  )
+)`
+
+// 关闭共享时，范围中可见的资产已包含在直接关联或锚定的资产中，无需扫描范围。
 const contextScopeAssetCTE = directTaskContextCTE + `,
 filtered_scopes AS MATERIALIZED (
   SELECT ts.* FROM task_scope ts JOIN context_tasks ctx ON ctx.task_id=ts.task_id
+  WHERE EXISTS (SELECT 1 FROM tasks t WHERE t.id=$1 AND t.deleted_at IS NULL AND t.share_global_assets)
 ),
 scope_asset_ids AS (
   SELECT a.id FROM filtered_scopes ts JOIN assets a ON a.company_id=ts.company_id WHERE ts.kind='company'
@@ -40,18 +58,21 @@ scope_asset_ids AS (
   UNION
   SELECT a.id FROM filtered_scopes ts JOIN assets a
     ON lower(regexp_replace(COALESCE(a.app_icp,''), '[[:space:]]+', '', 'g'))=ts.value WHERE ts.kind='icp'
+),
+context_asset_ids AS (
+  SELECT id FROM scope_asset_ids
+  UNION
+  SELECT a.id FROM context_tasks ctx JOIN assets a ON a.task_ids @> ARRAY[ctx.task_id]
+  UNION
+  SELECT ea.asset_id FROM exploration_anchors ea
+  JOIN exploration_nodes en ON en.id=ea.node_id
+  JOIN context_tasks ctx ON ctx.exploration_id=en.exploration_id
 )`
 
 const contextCoverageCTE = contextScopeAssetCTE + `,
 target AS (
   SELECT a.id, a.type, COALESCE(a.url,a.domain,a.ip,a.app_name,a.root_domain,'') AS label
-  FROM assets a JOIN scope_asset_ids matched ON matched.id=a.id
-  UNION
-  SELECT a.id, a.type, COALESCE(a.url,a.domain,a.ip,a.app_name,a.root_domain,'') AS label
-  FROM assets a
-  JOIN exploration_anchors ea ON ea.asset_id=a.id
-  JOIN exploration_nodes en ON en.id=ea.node_id
-  JOIN context_tasks ctx ON ctx.exploration_id=en.exploration_id
+  FROM assets a JOIN context_asset_ids matched ON matched.id=a.id
 ),
 tested AS (
   SELECT DISTINCT ea.asset_id FROM exploration_anchors ea
@@ -59,14 +80,10 @@ tested AS (
   JOIN context_tasks ctx ON ctx.exploration_id=en.exploration_id
 )`
 
-// Agent 的范围查询另外保留 IP 字面域名匹配，不扩大覆盖度的原有分母。
-const scopeTargetCTE = contextScopeAssetCTE + `,
-target AS (
-  SELECT id FROM scope_asset_ids
-  UNION
-  SELECT a.id FROM filtered_scopes ts JOIN assets a ON ts.net >>= try_inet(a.domain)
-  WHERE ts.kind IN ('ip','cidr')
-)`
+// DSL 与编号读取统一使用实时可见性，不因范围匹配引入其他任务的资产。
+const scopeTargetCTE = directTaskContextCTE + taskAssetVisibilityCTE + `,
+target AS (SELECT id FROM visible_assets)
+`
 
 // ListTaskScopeWithSources returns the current task's scope followed by the
 // scopes of its direct source tasks. TaskScope.TaskID preserves provenance.
@@ -179,21 +196,9 @@ ORDER BY target.id LIMIT $`+limitPosition+` OFFSET $`+offsetPosition, pageArgs..
 // used for destructive task cleanup; HostsByTask intentionally retains that
 // narrower, task-owned behavior.
 func (s *AssetStore) HostsByTaskWithSources(taskID int64) ([]string, error) {
-	rows, err := s.db.Query(`WITH `+contextScopeAssetCTE+`,
-context_assets AS (
-  SELECT DISTINCT a.id
-  FROM assets a
-  WHERE EXISTS (SELECT 1 FROM context_tasks ctx WHERE ctx.task_id=ANY(a.task_ids))
-  UNION
-  SELECT ea.asset_id
-  FROM exploration_anchors ea
-  JOIN exploration_nodes en ON en.id=ea.node_id
-  JOIN context_tasks ctx ON ctx.exploration_id=en.exploration_id
-  UNION
-  SELECT id FROM scope_asset_ids
-)
+	rows, err := s.db.Query(`WITH `+contextScopeAssetCTE+`
 SELECT COALESCE(a.domain,''), COALESCE(a.ip,''), COALESCE(a.url,'')
-FROM assets a JOIN context_assets ctx ON ctx.id=a.id`, taskID)
+FROM assets a JOIN context_asset_ids ctx ON ctx.id=a.id`, taskID)
 	if err != nil {
 		return nil, err
 	}
