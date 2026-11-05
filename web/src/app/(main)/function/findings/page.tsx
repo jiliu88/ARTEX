@@ -70,6 +70,7 @@ import {
 } from "./_components/findings-table";
 
 const FINDING_LIST_PREFERENCE_KEY = "artex_finding_list_preferences";
+const DEFAULT_FINDING_PAGE_SIZE = 100;
 
 // 列表视图:flat = 跨任务平铺大表(默认);grouped = 按任务分组折叠;
 // asset = 左侧资产树 + 右侧该子树下的发现。
@@ -147,7 +148,7 @@ export default function FindingsPage() {
   const [expanded, setExpanded] = React.useState<string | null>(null);
   const [flat, setFlat] = React.useState<FlatFindingsState>(EMPTY_FLAT_STATE);
   const [flatPage, setFlatPage] = React.useState(1);
-  const [flatPageSize, setFlatPageSize] = React.useState(20);
+  const [flatPageSize, setFlatPageSize] = React.useState(DEFAULT_FINDING_PAGE_SIZE);
   const [assetTree, setAssetTree] = React.useState<AssetTreeState>(EMPTY_ASSET_TREE);
   const [assetScope, setAssetScope] = React.useState<string | null>(null);
   const [groups, setGroups] = React.useState<FindingGroup[]>([]);
@@ -535,7 +536,7 @@ export default function FindingsPage() {
       setExpandedGroups(next);
       const state = groupFindings[key];
       if (opening && !state?.loaded && !state?.loading) {
-        void loadGroup(key, state?.page ?? 1, state?.pageSize ?? 10);
+        void loadGroup(key, state?.page ?? 1, state?.pageSize ?? DEFAULT_FINDING_PAGE_SIZE);
       }
     },
     [expandedGroups, groupFindings, loadGroup],
@@ -1105,6 +1106,7 @@ export default function FindingsPage() {
 
         {view === "cases" && (
           <FindingCaseList
+            defaultPageSize={DEFAULT_FINDING_PAGE_SIZE}
             onTotal={setCaseTotal}
             query={{ severity, status, vulnclass, task, query, sort, ...dateRange }}
             selectedIds={selectedIds}
@@ -1121,7 +1123,7 @@ export default function FindingsPage() {
                 items: [],
                 total: group.count,
                 page: 1,
-                pageSize: 10,
+                pageSize: DEFAULT_FINDING_PAGE_SIZE,
                 loaded: false,
                 loading: false,
               };
@@ -1203,6 +1205,7 @@ export default function FindingsPage() {
                             total={state.total}
                             onPageChange={(nextPage) => void loadGroup(key, nextPage, state.pageSize)}
                             onPageSizeChange={(nextSize) => void loadGroup(key, 1, nextSize)}
+                            pageSizeOptions={[10, 20, 50, 100]}
                           />
                         </>
                       )}

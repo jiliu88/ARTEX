@@ -401,6 +401,7 @@ export function FindingCaseList({
   contextTask,
   readOnly = false,
   onTotal,
+  defaultPageSize = 20,
 }: {
   query: Omit<FindingQuery, "page" | "pageSize">;
   selectedIds?: Set<string>;
@@ -408,9 +409,10 @@ export function FindingCaseList({
   contextTask?: string;
   readOnly?: boolean;
   onTotal?: (total: number) => void;
+  defaultPageSize?: number;
 }) {
   const [page, setPage] = React.useState(1);
-  const [pageSize, setPageSize] = React.useState(20);
+  const [pageSize, setPageSize] = React.useState(defaultPageSize);
   const [data, setData] = React.useState<FindingCasePage | null>(null);
   const [error, setError] = React.useState("");
   const [refresh, setRefresh] = React.useState(0);
