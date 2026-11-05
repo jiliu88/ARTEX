@@ -21,12 +21,29 @@ context_tasks AS (
   WHERE relation.task_id=$1
 )`
 
-// 先筛选范围，再分支匹配，使各分支能独立使用索引与连接策略。
-const contextScopeAssetCTE = directTaskContextCTE + `,
+// 每次查询读取当前任务的共享设置；直接来源只贡献资产，不继承其共享权限。
+const taskAssetVisibilityCTE = `,
+visible_assets AS (
+  SELECT a.id FROM assets a
+  WHERE EXISTS (
+    SELECT 1 FROM tasks current
+    WHERE current.id=$1 AND current.deleted_at IS NULL AND current.share_global_assets
+  )
+  OR EXISTS (SELECT 1 FROM context_tasks ctx WHERE ctx.task_id=ANY(a.task_ids))
+  OR EXISTS (
+    SELECT 1 FROM exploration_anchors anchor
+    JOIN exploration_nodes node ON node.id=anchor.node_id
+    JOIN context_tasks ctx ON ctx.exploration_id=node.exploration_id
+    WHERE anchor.asset_id=a.id
+  )
+)`
+
+// 先筛选范围，再分支匹配并应用可见性，保留各分支的索引与连接策略。
+const contextScopeAssetCTE = directTaskContextCTE + taskAssetVisibilityCTE + `,
 filtered_scopes AS MATERIALIZED (
   SELECT ts.* FROM task_scope ts JOIN context_tasks ctx ON ctx.task_id=ts.task_id
 ),
-scope_asset_ids AS (
+matched_scope_asset_ids AS (
   SELECT a.id FROM filtered_scopes ts JOIN assets a ON a.company_id=ts.company_id WHERE ts.kind='company'
   UNION
   SELECT a.id FROM filtered_scopes ts JOIN assets a ON a.root_domain=ts.domain WHERE ts.kind='root_domain'
@@ -40,12 +57,18 @@ scope_asset_ids AS (
   UNION
   SELECT a.id FROM filtered_scopes ts JOIN assets a
     ON lower(regexp_replace(COALESCE(a.app_icp,''), '[[:space:]]+', '', 'g'))=ts.value WHERE ts.kind='icp'
+),
+scope_asset_ids AS (
+  SELECT id FROM matched_scope_asset_ids WHERE id IN (SELECT id FROM visible_assets)
 )`
 
 const contextCoverageCTE = contextScopeAssetCTE + `,
 target AS (
   SELECT a.id, a.type, COALESCE(a.url,a.domain,a.ip,a.app_name,a.root_domain,'') AS label
   FROM assets a JOIN scope_asset_ids matched ON matched.id=a.id
+  UNION
+  SELECT a.id, a.type, COALESCE(a.url,a.domain,a.ip,a.app_name,a.root_domain,'') AS label
+  FROM assets a WHERE EXISTS (SELECT 1 FROM context_tasks ctx WHERE ctx.task_id=ANY(a.task_ids))
   UNION
   SELECT a.id, a.type, COALESCE(a.url,a.domain,a.ip,a.app_name,a.root_domain,'') AS label
   FROM assets a
@@ -59,14 +82,10 @@ tested AS (
   JOIN context_tasks ctx ON ctx.exploration_id=en.exploration_id
 )`
 
-// Agent 的范围查询另外保留 IP 字面域名匹配，不扩大覆盖度的原有分母。
-const scopeTargetCTE = contextScopeAssetCTE + `,
-target AS (
-  SELECT id FROM scope_asset_ids
-  UNION
-  SELECT a.id FROM filtered_scopes ts JOIN assets a ON ts.net >>= try_inet(a.domain)
-  WHERE ts.kind IN ('ip','cidr')
-)`
+// DSL 与编号读取统一使用实时可见性，不因范围匹配引入其他任务的资产。
+const scopeTargetCTE = directTaskContextCTE + taskAssetVisibilityCTE + `,
+target AS (SELECT id FROM visible_assets)
+`
 
 // ListTaskScopeWithSources returns the current task's scope followed by the
 // scopes of its direct source tasks. TaskScope.TaskID preserves provenance.
