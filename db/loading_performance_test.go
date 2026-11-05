@@ -71,7 +71,7 @@ func TestLoadingScopeEquivalenceAndPerformance(t *testing.T) {
  INSERT INTO task_scope VALUES(1001,1,'cidr',NULL,NULL,'192.0.2.0/24',NULL),(1002,2,'ip',NULL,NULL,'2001:db8::1/128',NULL),(1003,1,'icp',NULL,NULL,NULL,'icp1'),(1004,2,'icp',NULL,NULL,NULL,'app1'),(1005,3,'company',5,NULL,NULL,NULL),(1006,1,'subdomain',NULL,'sub1.example',NULL,NULL),(1007,1,'company',1,NULL,NULL,NULL);
  INSERT INTO exploration_nodes VALUES(1,1,'fact'),(2,2,'fact'),(3,3,'fact'),(4,4,'fact');
  INSERT INTO exploration_anchors VALUES(1,19999),(2,19998),(3,19997),(4,19996);
- CREATE INDEX ON assets(root_domain); CREATE INDEX ON assets(domain); CREATE INDEX ON assets(company_id);
+ CREATE INDEX ON assets(root_domain); CREATE INDEX ON assets(domain); CREATE INDEX ON assets(company_id); CREATE INDEX ON assets USING GIN(task_ids);
  CREATE INDEX ON task_scope(task_id); ANALYZE assets; ANALYZE task_scope;`
 	if _, err = tx.Exec(fixture); err != nil {
 		t.Fatal(err)
