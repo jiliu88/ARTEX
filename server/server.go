@@ -26,6 +26,7 @@ import (
 	"github.com/Autumn-27/artex/llmpool"
 	"github.com/Autumn-27/artex/llmrec"
 	"github.com/Autumn-27/artex/report"
+	"github.com/Autumn-27/artex/taskbrowser"
 	"github.com/Autumn-27/artex/traffic"
 	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
@@ -40,6 +41,8 @@ var BuildVersion = "dev"
 // Server exposes the ARTEX backend over a JSON HTTP API for the shadcn/ui
 // frontend.
 type Server struct {
+	browsers   *taskbrowser.Manager
+	browserWG  sync.WaitGroup
 	scheduleMu sync.Mutex
 	m          *Manager
 	engine     *Engine
@@ -176,6 +179,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		provByProfile:  map[int64]*provEntry{}, llmHealth: newLLMHealthRegistry(m.pg),
 		taskAgents: map[string]*taskAgentBundle{}, archiveWake: make(chan struct{}, 1), credentialWake: make(chan struct{}, 1)}
 	m.SetTaskControlMutex(&s.concMu)
+	s.initTaskBrowsers()
 	s.initSideQuestions()
 	if m.pg != nil {
 		if err := s.basicAuth.load(m.pg); err != nil {
@@ -228,6 +232,9 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 【报告步骤截图已开启】
 				报告撰写时，针对每个复现步骤中真实出现且仍可访问的 HTTP 页面，使用 browser MCP 的 browser_navigate 和 browser_take_screenshot 截取页面证据。只导航到漏洞证据中出现的目标 URL，不要自行扩大测试范围。将截图保存到当前工作目录下的 findings/screenshots/ 目录，文件名使用 finding-<finding_id>-step-<n>.png；确认文件存在后，在对应步骤中**统一使用工作区相对路径**加入 Markdown 图片：![步骤 <n> 截图](findings/screenshots/finding-<finding_id>-step-<n>.png)。禁止使用绝对路径、workspace://、file://，也不要混用相对路径和绝对路径；报告中所有截图都必须使用这一种格式。截图失败时如实写明，不要用占位图或把截图描述冒充图片。`
 			}
+			if s.browsers != nil {
+				return taskBrowserPrompt(key, t), true
+			}
 			return t, true
 		}
 		// Wire DB-stored wrap-up (settlement) prompts. Empty column → built-in default.
@@ -261,10 +268,13 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 			}
 			return a.TaskTimeoutWrapupMaxTurns, true
 		}
-		wireAgentAugment(m.pg, s.skillDir, s.hostTools) // 可见 skills/MCP + 流量/编排 host 工具装配进 agent 工具集
+		wireAgentAugment(m.pg, s.skillDir, s.hostTools, s.browsers) // 可见 skills/MCP + 主任务浏览器
 		domainReg := buildDomainReg(m.Assets())
 		wireTools(m.pg, domainReg) // 内置工具表：按 agent 过滤 + 覆盖描述/schema + 注入默认值
 		seedPrompts(m.pg)          // 内置 agent 默认提示词正文播种进 agent_prompts(仅空时)
+		if s.browsers != nil {
+			seedTaskBrowserRules(m.pg)
+		}
 		s.seedOrchestrationTools() // P2 跨任务编排工具 seed 进 tools 表(可按 agent 绑定)
 		if err := s.seedFindingRetester(); err != nil {
 			log.Printf("[retester] seed: %v", err)
@@ -320,6 +330,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 func (s *Server) Close() {
 	if s != nil {
 		s.proxyPoolWG.Wait()
+		s.browserWG.Wait()
 	}
 }
 

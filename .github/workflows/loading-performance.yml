@@ -39,8 +39,17 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Format changed Go sources remotely
         run: |
+          gofmt -w taskbrowser/*.go agent/browser_env.go server/task_browser*.go server/assembly.go server/server.go agent/worker.go agent/planner.go agent/mainagent.go
           gofmt -w db/loading*test.go db/exploration.go db/intercept.go db/task_assets.go db/task_assets_context.go server/intercept.go server/server.go server/task_assets.go server/request_timing*.go
           git diff > gofmt.patch
+      - name: Task browser concurrency and lifecycle
+        run: |
+          go test -race ./taskbrowser -timeout 120s -count=1 -v > browser-tests.log 2>&1
+          test -x /opt/google/chrome/chrome
+          ARTEX_BROWSER_EXECUTABLE=/opt/google/chrome/chrome go test ./taskbrowser -timeout 120s -run TestRealBrowserLifecycle -count=1 -v >> browser-tests.log 2>&1
+          go test ./server -run TestTaskBrowserRules -count=1 -v >> browser-tests.log
+          npm install -g @playwright/mcp@0.0.83
+          ARTEX_BROWSER_EXECUTABLE=/opt/google/chrome/chrome ARTEX_BROWSER_MCP_SMOKE=1 go test ./server -run TestTaskBrowserMCPUsesManagedInstance -count=1 -v >> browser-tests.log
       - name: Backend regression and scope benchmark
         run: bash scripts/verify-backend.sh ${{ job.services.postgres.id }}
       - name: Request and polling recovery tests
@@ -74,6 +83,9 @@ jobs:
           cp -a web/out/. server/webui/dist/
           mkdir -p dist
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags embedui -ldflags '-s -w -X main.version=v0.3.27' -o dist/artex ./cmd/artex
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o dist/task-browser.test ./taskbrowser
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o dist/browser-server.test ./server
+          cp scripts/install-browser-guard.sh dist/
           printf '%s\n' "$GITHUB_SHA" > dist/source-commit
           (cd dist && sha256sum artex > SHA256SUMS)
       - uses: actions/upload-artifact@v4
@@ -86,6 +98,7 @@ jobs:
             baseline-tests.log
             baseline-server-tests.log
             gofmt.patch
+            browser-tests.log
           retention-days: 7
       - uses: actions/upload-artifact@v4
         with:

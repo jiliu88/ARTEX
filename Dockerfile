@@ -26,11 +26,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # @playwright/cli：提供 playwright-cli，装完顺带 --help 验证可执行。
 # 再装 playwright（提供浏览器管理），装完用 --with-deps 预置 chromium 及其系统依赖，
 # 这样容器内 MCP/CLI 首次启动即可用，不再联网下载浏览器。
-RUN npm install -g @playwright/mcp@latest @playwright/cli@latest playwright@latest \
+RUN npm install -g @playwright/mcp@0.0.83 @playwright/cli@latest playwright@latest \
     && playwright-cli --help \
     && playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+COPY scripts/install-browser-guard.sh /app/install-browser-guard.sh
+RUN sh /app/install-browser-guard.sh
 ENV TZ=Asia/Shanghai
 # 预编译好的对应架构二进制（dist/amd64/artex 或 dist/arm64/artex）
 COPY dist/${TARGETARCH}/artex /app/artex
