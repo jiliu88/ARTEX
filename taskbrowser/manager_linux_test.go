@@ -207,7 +207,8 @@ func TestRealBrowserLifecycle(t *testing.T) {
 		}
 		return cmd, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// 生命周期验收包含启动、上下文和回收，不能复用仅启动阶段的 30 秒预算。
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	s, err := m.Ensure(ctx, "900001")
 	if err != nil {

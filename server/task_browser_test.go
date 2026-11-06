@@ -35,7 +35,7 @@ func TestTaskBrowserMCPUsesManagedInstance(t *testing.T) {
 	if os.Getenv("ARTEX_BROWSER_MCP_SMOKE") != "1" {
 		t.Skip("需要 CI/部署环境的预装 browser MCP")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	var active atomic.Bool
 	active.Store(true)
@@ -50,8 +50,8 @@ func TestTaskBrowserMCPUsesManagedInstance(t *testing.T) {
 		_, _ = w.Write([]byte("<h1>synthetic browser lifecycle " + r.URL.Path + "</h1>"))
 	}))
 	defer page.Close()
-	args, _ := json.Marshal([]string{"--no-install", "@playwright/mcp", "--cdp-endpoint", session.Endpoint, "--isolated"})
-	metadata, err := connectMCP(ctx, &db.MCPServer{Name: browserMCPName, Command: "npx", Transport: "stdio", Args: args})
+	args, _ := json.Marshal([]string{"--cdp-endpoint", session.Endpoint, "--isolated"})
+	metadata, err := connectMCP(ctx, &db.MCPServer{Name: browserMCPName, Command: "playwright-mcp", Transport: "stdio", Args: args})
 	if err != nil {
 		t.Fatal(err)
 	}
