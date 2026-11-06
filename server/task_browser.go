@@ -109,7 +109,7 @@ func (t *taskBrowserMCPTool) Call(ctx context.Context, in json.RawMessage, tc *a
 		b.tools = nil
 	}
 	if b.client == nil {
-		args, _ := json.Marshal([]string{"-c", `cd "$ARTEX_BROWSER_WORKDIR" && exec npx "$@"`, "artex-browser-mcp", "--no-install", "@playwright/mcp", "--cdp-endpoint", v.Endpoint, "--isolated"})
+		args, _ := json.Marshal([]string{"-c", `cd "$ARTEX_BROWSER_WORKDIR" && exec playwright-mcp "$@"`, "artex-browser-mcp", "--cdp-endpoint", v.Endpoint, "--isolated"})
 		env, _ := json.Marshal(map[string]string{"ARTEX_BROWSER_WORKDIR": b.manager.TaskDir(v.TaskID), "ARTEX_BROWSER_TASK": v.TaskID})
 		cl, err := connectMCP(b.ctx, &db.MCPServer{Name: browserMCPName, Transport: "stdio", Command: "/bin/sh", Args: args, Env: env})
 		if err != nil {
