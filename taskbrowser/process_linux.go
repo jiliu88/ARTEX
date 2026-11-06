@@ -15,6 +15,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const Supported = true
+
 func prepareProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }

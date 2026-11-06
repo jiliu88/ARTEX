@@ -17,6 +17,7 @@ import (
 )
 
 func (s *Server) initTaskBrowsers() {
+	if !taskbrowser.Supported { return }
 	s.browsers = taskbrowser.New(s.dataDir, func(id string) bool {
 		t, ok := s.m.Task(id)
 		if !ok || s.engine.IsDeleting(id) {

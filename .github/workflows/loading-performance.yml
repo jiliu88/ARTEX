@@ -44,9 +44,9 @@ jobs:
           git diff > gofmt.patch
       - name: Task browser concurrency and lifecycle
         run: |
-          go test -race ./taskbrowser -count=1 -v > browser-tests.log
+          go test -race ./taskbrowser -timeout 120s -count=1 -v > browser-tests.log 2>&1
           test -x /opt/google/chrome/chrome
-          ARTEX_BROWSER_EXECUTABLE=/opt/google/chrome/chrome go test ./taskbrowser -run TestRealBrowserLifecycle -count=1 -v >> browser-tests.log
+          ARTEX_BROWSER_EXECUTABLE=/opt/google/chrome/chrome go test ./taskbrowser -timeout 120s -run TestRealBrowserLifecycle -count=1 -v >> browser-tests.log 2>&1
           go test ./server -run TestTaskBrowserRules -count=1 -v >> browser-tests.log
           npm install -g @playwright/mcp@0.0.83
           ARTEX_BROWSER_EXECUTABLE=/opt/google/chrome/chrome ARTEX_BROWSER_MCP_SMOKE=1 go test ./server -run TestTaskBrowserMCPUsesManagedInstance -count=1 -v >> browser-tests.log

@@ -96,14 +96,14 @@ func (m *Manager) Ensure(ctx context.Context, id string) (Session, error) {
 	i := &instance{Session: Session{TaskID: id, PID: cmd.Process.Pid}, cmd: cmd, done: make(chan struct{}), profile: profile}
 	m.instances[id] = i
 	go func() { _ = cmd.Wait(); close(i.done) }()
-	ready, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ready, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
 	for {
 		if raw, err := os.ReadFile(filepath.Join(profile, "DevToolsActivePort")); err == nil {
-			lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-			if len(lines) == 2 {
+			lines := strings.Fields(string(raw))
+			if len(lines) >= 1 {
 				port, err := strconv.Atoi(lines[0])
 				if err == nil && port > 0 && port < 65536 {
 					i.Endpoint = fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -145,7 +145,7 @@ func (m *Manager) browserCommand(id, profile string) (*exec.Cmd, error) {
 	if path == "" {
 		return nil, errors.New("未安装受管 Chrome；请运行镜像中的 install-browser-guard.sh")
 	}
-	args := []string{"--headless=new", "--no-sandbox", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", "--user-data-dir=" + profile, "about:blank"}
+	args := []string{"--headless=new", "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-background-networking", "--disable-component-update", "--password-store=basic", "--use-mock-keychain", "--no-first-run", "--no-default-browser-check", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", "--user-data-dir=" + profile, "about:blank"}
 	if m.proxy != nil {
 		if p := m.proxy(); p != "" {
 			args = append(args, "--proxy-server="+p)
