@@ -12,6 +12,7 @@ import (
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/traffic"
+	"github.com/Autumn-27/artex/taskbrowser"
 	"github.com/Autumn-27/norma/skill"
 	actool "github.com/Autumn-27/norma/tool"
 )
@@ -23,13 +24,17 @@ import (
 // hostTools, if set, returns runtime host tools (currently the traffic tools when
 // capture is on) to add to EVERY agent's base list — the DB tools table then
 // filters them per-agent binding. Empty/nil → no host tools this run (capture off).
-func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.CoreTool, map[string][]string)) {
+func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.CoreTool, map[string][]string), browsers ...*taskbrowser.Manager) {
 	agent.ToolAugment = func(ctx context.Context, agentKey string) ([]actool.CoreTool, agent.DeferredInfo, func()) {
 		a, err := pg.GetAgentByKey(agentKey)
 		if err != nil || a == nil {
 			return nil, agent.DeferredInfo{}, nil
 		}
 		var extra []actool.CoreTool
+		var browserManager *taskbrowser.Manager
+		if len(browsers)>0 {browserManager=browsers[0]}
+		taskID:=browserRunID(ctx)
+		if browserManager!=nil && taskID>0 {extra=append(extra,taskBrowserTool(browserManager,taskID))}
 
 		// --- skills: load visible skills into reg (used for the Skill meta-tool
 		// and to know which MCP servers are skill-gated). ---
@@ -95,6 +100,11 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 					log.Printf("[mcp] %s tools/list 失败: %v", m.Name, err)
 					continue
 				}
+				var bridge *taskBrowserBridge
+				if m.Name==browserMCPName && browserManager!=nil && taskID>0 {
+					bridge=&taskBrowserBridge{ctx:ctx,manager:browserManager,id:taskID}
+					closers=append(closers,bridge)
+				}
 				for _, t := range ts {
 					// Playwright exposes the screenshot capability as a separate tool. Keep
 					// it opt-in so a normal browser MCP session does not unexpectedly send
@@ -103,6 +113,7 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 						(agentKey != "reporter" || !pg.GetBool(settingBrowserScreenshot, false)) {
 						continue
 					}
+					if bridge!=nil {t=&taskBrowserMCPTool{CoreTool:t,bridge:bridge}}
 					extra = append(extra, t)
 					allNames = append(allNames, t.Name())
 					serverTools[m.Name] = append(serverTools[m.Name], t.Name())
