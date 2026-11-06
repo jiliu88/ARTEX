@@ -107,6 +107,16 @@ func (m *Manager) Ensure(ctx context.Context, id string) (Session, error) {
 				port, err := strconv.Atoi(lines[0])
 				if err == nil && port > 0 && port < 65536 {
 					i.Endpoint = fmt.Sprintf("http://127.0.0.1:%d", port)
+					// 端口文件可能先于 HTTP 服务就绪，不能过早交给 Worker。
+					if err := Healthy(ready, i.Endpoint); err != nil {
+						select {
+						case <-ready.Done():
+							m.stopLocked(id)
+							return Session{}, fmt.Errorf("浏览器 CDP 未就绪: %w", err)
+						case <-tick.C:
+							continue
+						}
+					}
 					if m.allowed != nil && !m.allowed(id) {
 						m.stopLocked(id)
 						return Session{}, errors.New("任务已结束")

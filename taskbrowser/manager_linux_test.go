@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,7 +21,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// 合成子进程只写 DevToolsActivePort，不访问网络或业务数据。
+// 合成子进程只提供回环 CDP 就绪响应，不访问目标网络或业务数据。
 func TestBrowserProcessHelper(t *testing.T) {
 	args := os.Args
 	if len(args) < 3 || args[len(args)-2] != "--" {
@@ -29,12 +30,15 @@ func TestBrowserProcessHelper(t *testing.T) {
 	if err := os.WriteFile("/proc/self/comm", []byte("chrome"), 0600); err != nil {
 		os.Exit(2)
 	}
-	if err := os.WriteFile(filepath.Join(args[len(args)-1], "DevToolsActivePort"), []byte("9222\n/devtools/browser/synthetic\n"), 0600); err != nil {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil { os.Exit(2) }
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := os.WriteFile(filepath.Join(args[len(args)-1], "DevToolsActivePort"), []byte(fmt.Sprintf("%d\n/devtools/browser/synthetic\n", port)), 0600); err != nil {
 		os.Exit(2)
 	}
-	for {
-		time.Sleep(time.Hour)
-	}
+	_ = http.Serve(listener, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"webSocketDebuggerUrl":"ws://127.0.0.1/synthetic"}`))
+	}))
 }
 
 func fakeManager(t *testing.T, allowed func(string) bool) (*Manager, *atomic.Int32) {
