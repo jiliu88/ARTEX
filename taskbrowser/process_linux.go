@@ -3,6 +3,7 @@
 package taskbrowser
 
 import (
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +16,7 @@ import (
 )
 
 func prepareProcess(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGTERM}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
 type proc struct {
@@ -51,6 +52,9 @@ func processInfo(pid int, root string) (proc, bool) {
 		return proc{}, false
 	}
 	p := proc{pid: pid, name: text[a+1 : b], start: f[19]}
+	if exe, err := os.Readlink(base + "/exe"); err == nil && browserProcess(filepath.Base(strings.TrimSuffix(exe," (deleted)"))) {
+		p.name = filepath.Base(strings.TrimSuffix(exe," (deleted)"))
+	}
 	p.parent, _ = strconv.Atoi(f[1])
 	p.group, _ = strconv.Atoi(f[2])
 	// 限定当前进程的 UID 与 cgroup，避免影响同机其他容器和用户。
@@ -165,6 +169,7 @@ func terminateTask(root, id string, keep int) {
 	}
 	if len(fds) > 0 {
 		time.Sleep(200 * time.Millisecond)
+		log.Printf("[browser] task=%s reclaimed_processes=%d",id,len(fds))
 	}
 	for _, fd := range fds {
 		_ = unix.PidfdSendSignal(fd, unix.SIGKILL, nil, 0)
