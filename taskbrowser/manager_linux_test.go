@@ -31,7 +31,9 @@ func TestBrowserProcessHelper(t *testing.T) {
 		os.Exit(2)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil { os.Exit(2) }
+	if err != nil {
+		os.Exit(2)
+	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	if err := os.WriteFile(filepath.Join(args[len(args)-1], "DevToolsActivePort"), []byte(fmt.Sprintf("%d\n/devtools/browser/synthetic\n", port)), 0600); err != nil {
 		os.Exit(2)
@@ -200,7 +202,9 @@ func TestRealBrowserLifecycle(t *testing.T) {
 	launch := m.command
 	m.command = func(id, profile string) (*exec.Cmd, error) {
 		cmd, err := launch(id, profile)
-		if err == nil { cmd.Stderr = &startupLog }
+		if err == nil {
+			cmd.Stderr = &startupLog
+		}
 		return cmd, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

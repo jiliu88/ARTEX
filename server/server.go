@@ -232,7 +232,9 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 【报告步骤截图已开启】
 				报告撰写时，针对每个复现步骤中真实出现且仍可访问的 HTTP 页面，使用 browser MCP 的 browser_navigate 和 browser_take_screenshot 截取页面证据。只导航到漏洞证据中出现的目标 URL，不要自行扩大测试范围。将截图保存到当前工作目录下的 findings/screenshots/ 目录，文件名使用 finding-<finding_id>-step-<n>.png；确认文件存在后，在对应步骤中**统一使用工作区相对路径**加入 Markdown 图片：![步骤 <n> 截图](findings/screenshots/finding-<finding_id>-step-<n>.png)。禁止使用绝对路径、workspace://、file://，也不要混用相对路径和绝对路径；报告中所有截图都必须使用这一种格式。截图失败时如实写明，不要用占位图或把截图描述冒充图片。`
 			}
-			if s.browsers != nil { return taskBrowserPrompt(key, t), true }
+			if s.browsers != nil {
+				return taskBrowserPrompt(key, t), true
+			}
 			return t, true
 		}
 		// Wire DB-stored wrap-up (settlement) prompts. Empty column → built-in default.
@@ -270,7 +272,9 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		domainReg := buildDomainReg(m.Assets())
 		wireTools(m.pg, domainReg) // 内置工具表：按 agent 过滤 + 覆盖描述/schema + 注入默认值
 		seedPrompts(m.pg)          // 内置 agent 默认提示词正文播种进 agent_prompts(仅空时)
-		if s.browsers != nil { seedTaskBrowserRules(m.pg) }
+		if s.browsers != nil {
+			seedTaskBrowserRules(m.pg)
+		}
 		s.seedOrchestrationTools() // P2 跨任务编排工具 seed 进 tools 表(可按 agent 绑定)
 		if err := s.seedFindingRetester(); err != nil {
 			log.Printf("[retester] seed: %v", err)
