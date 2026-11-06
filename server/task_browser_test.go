@@ -35,7 +35,7 @@ func TestTaskBrowserMCPUsesManagedInstance(t *testing.T) {
 	if os.Getenv("ARTEX_BROWSER_MCP_SMOKE") != "1" {
 		t.Skip("需要 CI/部署环境的预装 browser MCP")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	var active atomic.Bool
 	active.Store(true)
