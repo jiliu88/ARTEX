@@ -11,8 +11,8 @@ import (
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
-	"github.com/Autumn-27/artex/traffic"
 	"github.com/Autumn-27/artex/taskbrowser"
+	"github.com/Autumn-27/artex/traffic"
 	"github.com/Autumn-27/norma/skill"
 	actool "github.com/Autumn-27/norma/tool"
 )
@@ -32,9 +32,13 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 		}
 		var extra []actool.CoreTool
 		var browserManager *taskbrowser.Manager
-		if len(browsers)>0 {browserManager=browsers[0]}
-		taskID:=browserRunID(ctx)
-		if browserManager!=nil && taskID>0 {extra=append(extra,taskBrowserTool(browserManager,taskID))}
+		if len(browsers) > 0 {
+			browserManager = browsers[0]
+		}
+		taskID := browserRunID(ctx)
+		if browserManager != nil && taskID > 0 {
+			extra = append(extra, taskBrowserTool(browserManager, taskID))
+		}
 
 		// --- skills: load visible skills into reg (used for the Skill meta-tool
 		// and to know which MCP servers are skill-gated). ---
@@ -101,9 +105,9 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 					continue
 				}
 				var bridge *taskBrowserBridge
-				if m.Name==browserMCPName && browserManager!=nil && taskID>0 {
-					bridge=&taskBrowserBridge{ctx:ctx,manager:browserManager,id:taskID}
-					closers=append(closers,bridge)
+				if m.Name == browserMCPName && browserManager != nil && taskID > 0 {
+					bridge = &taskBrowserBridge{ctx: ctx, manager: browserManager, id: taskID}
+					closers = append(closers, bridge)
 				}
 				for _, t := range ts {
 					// Playwright exposes the screenshot capability as a separate tool. Keep
@@ -113,7 +117,9 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 						(agentKey != "reporter" || !pg.GetBool(settingBrowserScreenshot, false)) {
 						continue
 					}
-					if bridge!=nil {t=&taskBrowserMCPTool{CoreTool:t,bridge:bridge}}
+					if bridge != nil {
+						t = &taskBrowserMCPTool{CoreTool: t, bridge: bridge}
+					}
 					extra = append(extra, t)
 					allNames = append(allNames, t.Name())
 					serverTools[m.Name] = append(serverTools[m.Name], t.Name())
