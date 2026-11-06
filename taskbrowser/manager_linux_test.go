@@ -3,6 +3,7 @@
 package taskbrowser
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -191,11 +192,18 @@ func TestRealBrowserLifecycle(t *testing.T) {
 	active.Store(true)
 	m := New(t.TempDir(), func(string) bool { return active.Load() }, nil)
 	defer m.Close()
+	var startupLog bytes.Buffer
+	launch := m.command
+	m.command = func(id, profile string) (*exec.Cmd, error) {
+		cmd, err := launch(id, profile)
+		if err == nil { cmd.Stderr = &startupLog }
+		return cmd, err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	s, err := m.Ensure(ctx, "900001")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v; synthetic Chrome startup: %s", err, startupLog.String())
 	}
 	if err := Healthy(ctx, s.Endpoint); err != nil {
 		t.Fatal(err)
