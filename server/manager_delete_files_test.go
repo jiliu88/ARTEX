@@ -35,7 +35,7 @@ func TestManagerCanceledDeleteRestoresStagedFiles(t *testing.T) {
 		t.Fatalf("task files were not restored: %v", err)
 	}
 	staged, err := os.ReadDir(filepath.Join(dataDir, ".delete-staging"))
-	if err != nil || len(staged) != 0 {
+	if (err != nil && !os.IsNotExist(err)) || len(staged) != 0 {
 		t.Fatalf("unrestored deletion stages=%d err=%v", len(staged), err)
 	}
 	if _, ok := m.Task(task.ID); !ok {

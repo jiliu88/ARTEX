@@ -2020,23 +2020,26 @@ func (m *Manager) DeleteTask(id string, opts DeleteTaskOptions) (DeleteTaskResul
 
 // DeleteTaskContext 将请求取消传入删除事务；失败后恢复暂存的文件和流量。
 func (m *Manager) DeleteTaskContext(ctx context.Context, id string, opts DeleteTaskOptions) (DeleteTaskResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
 	result := DeleteTaskResult{Deleted: id}
 	n, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
 		return result, err
 	}
-	registered, err := m.pg.GetTask(n)
-	if err != nil {
-		return result, err
-	}
-	if registered == nil {
+	var explorationID int64
+	err = m.pg.QueryRowContext(ctx, `SELECT exploration_id FROM tasks WHERE id=$1 AND deleted_at IS NULL`, n).Scan(&explorationID)
+	if errors.Is(err, sql.ErrNoRows) {
 		m.forgetTask(id, n)
 		return result, nil
+	}
+	if err != nil {
+		return result, err
 	}
 
 	var fileStage *taskFileDeleteStage
 	if opts.DeleteFiles {
-		fileStage, err = stageTaskFiles(m.dir, id, registered.ExplorationID)
+		fileStage, err = stageTaskFiles(m.dir, id, explorationID)
 		if err != nil {
 			return result, err
 		}
@@ -2050,7 +2053,7 @@ func (m *Manager) DeleteTaskContext(ctx context.Context, id string, opts DeleteT
 			if len(p.TrafficHosts) == 0 {
 				return nil
 			}
-			trafficStage, err = m.traffic.StageDeleteHostsExact(p.TrafficHosts)
+			trafficStage, err = m.traffic.StageDeleteHostsExactContext(ctx, p.TrafficHosts)
 			if err != nil {
 				return err
 			}
@@ -2069,6 +2072,8 @@ func (m *Manager) DeleteTaskContext(ctx context.Context, id string, opts DeleteT
 	result.AssetsDetached = dbResult.AssetsDetached
 	result.FindingsDeleted = dbResult.FindingsDeleted
 	result.LLMRecordsDeleted = dbResult.LLMRecordsDeleted
+	// 数据库已经提交，列表立即采用持久化结果，不再等磁盘回收才移除任务。
+	m.forgetTask(id, n)
 
 	// PostgreSQL is now authoritative: finalize the staged external deletion and
 	// forget the live task even if a final purge reports an error. Such errors are
@@ -2085,7 +2090,6 @@ func (m *Manager) DeleteTaskContext(ctx context.Context, id string, opts DeleteT
 			finalizeErrs = append(finalizeErrs, fmt.Errorf("finalize task file deletion: %w", err))
 		}
 	}
-	m.forgetTask(id, n)
 	if err := errors.Join(finalizeErrs...); err != nil {
 		return result, &taskDeleteCommittedError{err: err}
 	}

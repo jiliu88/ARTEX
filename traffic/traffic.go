@@ -156,6 +156,10 @@ type Traffic struct {
 	// reclaiming keeps a single background reclamation in flight. Concurrent ones
 	// would only contend for wmu, never finish sooner.
 	reclaiming atomic.Bool
+	maintenanceMu sync.Mutex
+	blobGCCancel context.CancelFunc
+	blobGCSerial uint64
+	reclaimCancel context.CancelFunc
 	// closed is shut by Close so a reclamation abandons its remaining budget
 	// instead of holding shutdown open for minutes. Nil on the zero value, which
 	// stopping() treats as "not closing".
@@ -390,6 +394,7 @@ func (t *Traffic) Close() error {
 	if t.closed != nil {
 		t.closeOnce.Do(func() { close(t.closed) })
 	}
+	t.cancelMaintenance()
 	t.reaping.Wait()
 	return t.db.Close()
 }
@@ -466,7 +471,7 @@ func proxyCausedErr(err error) bool {
 func (t *Traffic) record(f *mproxy.Flow) {
 	// The write lock covers blob + index writes, so DeleteHost (and its blob GC)
 	// can run under the same lock without racing a concurrent record.
-	t.wmu.Lock()
+	t.lockForMutation()
 	defer t.wmu.Unlock()
 	host := f.Request.URL.Hostname()
 	method := f.Request.Method
@@ -1121,7 +1126,7 @@ func (t *Traffic) Count() (int, error) {
 // than deleted by host. Returns rows deleted.
 func (t *Traffic) DeleteHost(host string) (int64, error) {
 	like := "%" + host + "%"
-	t.wmu.Lock()
+	t.lockForMutation()
 	defer t.wmu.Unlock()
 	// Resolved before the rows go away: with a substring match, the index is the
 	// only record of which host directories the filter actually hit.
@@ -1151,9 +1156,7 @@ func (t *Traffic) DeleteHost(host string) (int64, error) {
 	t.reapStage(stageDir)
 	if n > 0 {
 		t.reclaim()
-		if err := t.gcBlobs(); err != nil {
-			return n, err
-		}
+		t.scheduleBlobGC()
 	}
 	return n, nil
 }
@@ -1173,7 +1176,7 @@ func (t *Traffic) DeleteHost(host string) (int64, error) {
 // Returns the number of exchanges deleted and how many bytes of index the
 // compaction handed back.
 func (t *Traffic) DeleteAll() (deleted int64, reclaimed int64, err error) {
-	t.wmu.Lock()
+	t.lockForMutation()
 	defer t.wmu.Unlock()
 	before := t.indexBytes()
 	trees, err := t.allHostTrees()
@@ -1272,19 +1275,23 @@ func (t *Traffic) compactIndex() error {
 // full-text index rows, bodies, blob references, and finally the index rows.
 // Order matters — each sub-select reads exchanges, so that table is emptied last.
 func (t *Traffic) deleteWhere(tx *sql.Tx, where string, args ...any) (int64, error) {
+	return t.deleteWhereContext(context.Background(), tx, where, args...)
+}
+
+func (t *Traffic) deleteWhereContext(ctx context.Context, tx *sql.Tx, where string, args ...any) (int64, error) {
 	if t.fts {
 		// ex_fts is contentless and addressed by rowid, hence the rowid sub-select.
-		if _, err := tx.Exec(`DELETE FROM ex_fts WHERE rowid IN (SELECT rowid FROM exchanges WHERE `+where+`)`, args...); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM ex_fts WHERE rowid IN (SELECT rowid FROM exchanges WHERE `+where+`)`, args...); err != nil {
 			return 0, fmt.Errorf("删除全文索引: %w", err)
 		}
 	}
-	if _, err := tx.Exec(`DELETE FROM exchange_bodies WHERE id IN (SELECT id FROM exchanges WHERE `+where+`)`, args...); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM exchange_bodies WHERE id IN (SELECT id FROM exchanges WHERE `+where+`)`, args...); err != nil {
 		return 0, fmt.Errorf("删除正文: %w", err)
 	}
-	if _, err := tx.Exec(`DELETE FROM blob_refs WHERE exchange_id IN (SELECT id FROM exchanges WHERE `+where+`)`, args...); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM blob_refs WHERE exchange_id IN (SELECT id FROM exchanges WHERE `+where+`)`, args...); err != nil {
 		return 0, fmt.Errorf("删除 blob 引用: %w", err)
 	}
-	res, err := tx.Exec(`DELETE FROM exchanges WHERE `+where, args...)
+	res, err := tx.ExecContext(ctx, `DELETE FROM exchanges WHERE `+where, args...)
 	if err != nil {
 		return 0, fmt.Errorf("删除索引行: %w", err)
 	}
@@ -1500,7 +1507,11 @@ func (s *HostDeleteStage) Deleted() int64 {
 // StageDeleteHostsExact prepares a reversible exact-host deletion. Callers must
 // finish every successful stage with Commit or Rollback.
 func (t *Traffic) StageDeleteHostsExact(hosts []string) (*HostDeleteStage, error) {
-	return t.stageDeleteHostsExact(hosts, 0, 0)
+	return t.StageDeleteHostsExactContext(context.Background(), hosts)
+}
+
+func (t *Traffic) StageDeleteHostsExactContext(ctx context.Context, hosts []string) (*HostDeleteStage, error) {
+	return t.stageDeleteHostsExact(ctx, hosts, 0, 0)
 }
 
 // StageDeleteHostsExactForArchive ties the reversible traffic deletion to a
@@ -1510,11 +1521,13 @@ func (t *Traffic) StageDeleteHostsExactForArchive(hosts []string, archiveID, tas
 	if archiveID <= 0 || taskID <= 0 {
 		return nil, errors.New("archive and task ids must be positive")
 	}
-	return t.stageDeleteHostsExact(hosts, archiveID, taskID)
+	return t.stageDeleteHostsExact(context.Background(), hosts, archiveID, taskID)
 }
 
-func (t *Traffic) stageDeleteHostsExact(hosts []string, archiveID, taskID int64) (*HostDeleteStage, error) {
-	t.wmu.Lock()
+func (t *Traffic) stageDeleteHostsExact(ctx context.Context, hosts []string, archiveID, taskID int64) (*HostDeleteStage, error) {
+	if err := lockTrafficWriter(ctx, &t.wmu, t.cancelMaintenance); err != nil {
+		return nil, err
+	}
 	stage := &HostDeleteStage{traffic: t}
 	fail := func(cause error) (*HostDeleteStage, error) {
 		if rollbackErr := stage.rollbackLocked(); rollbackErr != nil {
@@ -1552,13 +1565,16 @@ func (t *Traffic) stageDeleteHostsExact(hosts []string, archiveID, taskID int64)
 	}
 	stage.tx = tx
 	for _, h := range unique {
-		n, err := t.deleteWhere(tx, `host=?`, h)
+		n, err := t.deleteWhereContext(ctx, tx, `host=?`, h)
 		if err != nil {
 			return fail(err)
 		}
 		stage.deleted += n
 	}
 
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
 	stage.stageDir, stage.moves, err = t.stageTreesForArchive(legacy, unique, archiveID, taskID)
 	if err != nil {
 		return fail(err)
@@ -1573,7 +1589,7 @@ func (t *Traffic) RecoverHostDeleteStages(archiveCommitted func(int64, int64) (b
 	if t == nil {
 		return nil
 	}
-	t.wmu.Lock()
+	t.lockForMutation()
 	defer t.wmu.Unlock()
 	parent := filepath.Join(t.dir, "_delete_staging")
 	entries, err := os.ReadDir(parent)
@@ -1754,14 +1770,11 @@ func (s *HostDeleteStage) Commit() error {
 	// it now runs in the background, while collection below only needs them to be
 	// out of the live tree — which the staging rename already guaranteed.
 	s.traffic.reapStage(s.stageDir)
-	s.traffic.reclaim()
-	var errs []error
-	if err := s.traffic.gcBlobs(); err != nil {
-		errs = append(errs, fmt.Errorf("回收流量 blob: %w", err))
-	}
 	s.done = true
 	s.traffic.wmu.Unlock()
-	return errors.Join(errs...)
+	s.traffic.reclaim()
+	s.traffic.scheduleBlobGC()
+	return nil
 }
 
 // indexBytes is the index's real footprint on disk: the database plus its
@@ -1794,30 +1807,48 @@ func (t *Traffic) indexBytes() int64 {
 // Best-effort throughout. Failing to reclaim costs disk space, never
 // correctness, so errors are logged and the next deletion resumes the work.
 func (t *Traffic) reclaim() {
+	if t.stopping() {
+		return
+	}
 	if !t.reclaiming.CompareAndSwap(false, true) {
 		return // one pass at a time; a second would only contend for the lock
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), reclaimBudget)
+	t.maintenanceMu.Lock()
+	t.reclaimCancel = cancel
+	t.maintenanceMu.Unlock()
 	t.reaping.Go(func() {
 		defer t.reclaiming.Store(false)
+		defer cancel()
+		defer func() {
+			t.maintenanceMu.Lock()
+			t.reclaimCancel = nil
+			t.maintenanceMu.Unlock()
+		}()
 		// One pinned connection for the whole pass: a long reclamation issues
 		// hundreds of statements, and letting the pool hand each one a different
 		// connection would both churn connections and split the freelist readings
 		// that decide when to stop away from the vacuum they measure.
-		ctx := context.Background()
 		conn, err := t.db.Conn(ctx)
 		if err != nil {
-			log.Printf("[traffic] 回收索引空间失败（获取连接）：%v", err)
+			if ctx.Err() == nil {
+				log.Printf("[traffic] 回收索引空间失败（获取连接）：%v", err)
+			}
 			return
 		}
 		defer conn.Close()
 		deadline := time.Now().Add(reclaimBudget)
 		merges := reclaimMergeSteps
 		for step := 0; ; step++ {
-			t.wmu.Lock()
+			if err := lockTrafficWriter(ctx, &t.wmu, nil); err != nil {
+				return
+			}
 			progressed, err := t.reclaimChunk(ctx, conn, &merges)
 			t.wmu.Unlock()
 			if err != nil {
-				log.Printf("[traffic] 回收索引空间失败：%v", err)
+				if ctx.Err() == nil {
+					log.Printf("[traffic] 回收索引空间失败：%v", err)
+				}
 				return
 			}
 			if !progressed {
@@ -1838,7 +1869,9 @@ func (t *Traffic) reclaim() {
 		// Truncating the log is what makes the reclamation visible on disk: in WAL
 		// mode the freed pages are recorded there first, and a PASSIVE checkpoint
 		// would leave the log itself sitting at its high-water mark.
-		t.wmu.Lock()
+		if err := lockTrafficWriter(ctx, &t.wmu, nil); err != nil {
+			return
+		}
 		defer t.wmu.Unlock()
 		if _, err := conn.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 			log.Printf("[traffic] 截断 WAL 失败：%v", err)
@@ -1893,8 +1926,12 @@ func (t *Traffic) reclaimChunk(ctx context.Context, conn *sql.Conn, merges *int)
 // affected entries. Callers must hold wmu so this never races a concurrent
 // record() writing a fresh blob + reference.
 func (t *Traffic) gcBlobs() error {
+	return t.gcBlobsContext(context.Background())
+}
+
+func (t *Traffic) gcBlobsContext(ctx context.Context) error {
 	refs := make(map[string]struct{})
-	rows, err := t.db.Query(`SELECT DISTINCT hash FROM blob_refs`)
+	rows, err := t.db.QueryContext(ctx, `SELECT DISTINCT hash FROM blob_refs`)
 	if err != nil {
 		return err
 	}
@@ -1910,13 +1947,16 @@ func (t *Traffic) gcBlobs() error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if err := t.legacyBlobRefs(refs); err != nil {
+	if err := t.legacyBlobRefs(ctx, refs); err != nil {
 		return err
 	}
 
 	root := filepath.Join(t.dir, "_blobs", "sha256")
 	var buckets []string
 	if err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil || d == nil {
 			return nil
 		}
@@ -1939,6 +1979,9 @@ func (t *Traffic) gcBlobs() error {
 	// to avoid deleting a bucket that still holds live blobs.
 	sort.Slice(buckets, func(i, j int) bool { return len(buckets[i]) > len(buckets[j]) })
 	for _, b := range buckets {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		os.Remove(b)
 	}
 	return nil
@@ -1949,9 +1992,9 @@ func (t *Traffic) gcBlobs() error {
 // the first collection after the upgrade would delete blobs that history still
 // points at. Skipped entirely once no legacy rows remain — the steady state — so
 // the tree walk is transitional rather than a permanent cost.
-func (t *Traffic) legacyBlobRefs(refs map[string]struct{}) error {
+func (t *Traffic) legacyBlobRefs(ctx context.Context, refs map[string]struct{}) error {
 	var n int
-	if err := t.db.QueryRow(`SELECT COUNT(*) FROM exchanges WHERE path<>''`).Scan(&n); err != nil {
+	if err := t.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM exchanges WHERE path<>'' LIMIT 1)`).Scan(&n); err != nil {
 		return err
 	}
 	if n == 0 {
@@ -1959,8 +2002,11 @@ func (t *Traffic) legacyBlobRefs(refs map[string]struct{}) error {
 	}
 	blobRe := regexp.MustCompile(`@blob sha256:([0-9a-f]{64})`)
 	return filepath.WalkDir(t.dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d == nil {
-			return nil // skip unreadable entries
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if err != nil {
+			return err
 		}
 		if d.IsDir() {
 			// _blobs/_index/_ca never contain references; skip their subtrees.
@@ -1972,14 +2018,10 @@ func (t *Traffic) legacyBlobRefs(refs map[string]struct{}) error {
 		if nm := d.Name(); nm != "request.http" && nm != "response.http" {
 			return nil
 		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return nil
+		if !d.Type().IsRegular() {
+			return errors.New("历史流量引用文件不是普通文件，已跳过本轮回收")
 		}
-		for _, m := range blobRe.FindAllSubmatch(b, -1) {
-			refs[string(m[1])] = struct{}{}
-		}
-		return nil
+		return collectLegacyFileRefs(ctx, p, refs, blobRe)
 	})
 }
 

@@ -382,6 +382,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 	if n, err := tr.DeleteHost("a.example"); err != nil || n != 1 {
 		t.Fatalf("DeleteHost(a.example)=%d, err=%v; want 1, nil", n, err)
 	}
+	tr.reaping.Wait()
 	if _, err := os.Stat(blobA); !os.IsNotExist(err) {
 		t.Fatalf("orphaned blobA still exists: %v", err)
 	}
