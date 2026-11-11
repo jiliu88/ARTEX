@@ -291,9 +291,9 @@ type Manager struct {
 	proxyPool           *proxyPoolState
 	forwardProxy        *dynamicForwardProxy
 	proxyPoolConfigured atomic.Bool
-	fileReaping sync.WaitGroup
-	fileCleanupCtx context.Context
-	fileCleanupCancel context.CancelFunc
+	fileReaping         sync.WaitGroup
+	fileCleanupCtx      context.Context
+	fileCleanupCancel   context.CancelFunc
 }
 
 // SetTaskControlMutex lets lifecycle operations that originate in Manager

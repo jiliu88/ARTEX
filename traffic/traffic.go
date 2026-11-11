@@ -155,10 +155,10 @@ type Traffic struct {
 	incrementalVacuum bool
 	// reclaiming keeps a single background reclamation in flight. Concurrent ones
 	// would only contend for wmu, never finish sooner.
-	reclaiming atomic.Bool
+	reclaiming    atomic.Bool
 	maintenanceMu sync.Mutex
-	blobGCCancel context.CancelFunc
-	blobGCSerial uint64
+	blobGCCancel  context.CancelFunc
+	blobGCSerial  uint64
 	reclaimCancel context.CancelFunc
 	// closed is shut by Close so a reclamation abandons its remaining budget
 	// instead of holding shutdown open for minutes. Nil on the zero value, which

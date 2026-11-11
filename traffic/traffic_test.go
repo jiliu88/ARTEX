@@ -397,6 +397,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 	if n, err := tr.DeleteHost("c.example"); err != nil || n != 1 {
 		t.Fatalf("DeleteHost(c.example)=%d, err=%v; want 1, nil", n, err)
 	}
+	tr.reaping.Wait()
 	if _, err := os.Stat(blobC); err != nil {
 		t.Fatalf("shared blobC removed after deleting one sharer: %v", err)
 	}
@@ -405,6 +406,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 	if n, err := tr.DeleteHost("d.example"); err != nil || n != 1 {
 		t.Fatalf("DeleteHost(d.example)=%d, err=%v; want 1, nil", n, err)
 	}
+	tr.reaping.Wait()
 	if _, err := os.Stat(blobC); !os.IsNotExist(err) {
 		t.Fatalf("blobC still exists after last reference removed: %v", err)
 	}
