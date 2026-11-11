@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -711,7 +712,7 @@ func (d *DB) DeleteTask(id int64) error {
 // optional to preserve callers of the original two-option API.
 func (d *DB) DeleteTaskCascade(id int64, deleteAssets, deleteFindings bool, deleteLLMRecords ...bool) (TaskDeleteResult, error) {
 	deleteRecords := len(deleteLLMRecords) > 0 && deleteLLMRecords[0]
-	return d.DeleteTaskCascadePrepared(id, deleteAssets, deleteFindings, deleteRecords, nil)
+	return d.DeleteTaskCascadePrepared(context.Background(), id, deleteAssets, deleteFindings, deleteRecords, nil)
 }
 
 // DeleteTaskCascadePrepared coordinates reversible external deletion with the
@@ -724,18 +725,25 @@ func (d *DB) DeleteTaskCascade(id int64, deleteAssets, deleteFindings bool, dele
 // error rolls PostgreSQL back; the caller remains responsible for rolling back
 // external work that its callback staged successfully.
 func (d *DB) DeleteTaskCascadePrepared(
+	ctx context.Context,
 	id int64,
 	deleteAssets, deleteFindings, deleteLLMRecords bool,
 	prepare func(TaskDeletePreparation) error,
 ) (TaskDeleteResult, error) {
 	var result TaskDeleteResult
-	tx, err := d.Begin()
+	// 独立限制整段事务；客户端断开、超时或等锁失败时全部回滚。
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return result, err
 	}
 	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='45s'`); err != nil {
+		return result, err
+	}
 	var expID int64
-	if err := tx.QueryRow(`SELECT exploration_id FROM tasks WHERE id=$1 FOR UPDATE`, id).Scan(&expID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT exploration_id FROM tasks WHERE id=$1 FOR UPDATE`, id).Scan(&expID); err != nil {
 		if err == sql.ErrNoRows {
 			return result, nil // already gone
 		}
@@ -747,12 +755,12 @@ func (d *DB) DeleteTaskCascadePrepared(
 	// prevents phantoms (a distinct asset row for the same host) as well as new
 	// ownership/anchor references until the deletion transaction commits.
 	if deleteAssets || prepare != nil {
-		if _, err := tx.Exec(`LOCK TABLE assets, exploration_anchors IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		if _, err := tx.ExecContext(ctx, `LOCK TABLE assets, exploration_anchors IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 			return result, err
 		}
 	}
 	if prepare != nil {
-		hosts, err := hostsForTaskDeletion(tx, id, expID)
+		hosts, err := hostsForTaskDeletion(ctx, tx, id, expID)
 		if err != nil {
 			return result, err
 		}
@@ -768,7 +776,7 @@ func (d *DB) DeleteTaskCascadePrepared(
 		// An asset is deletable only when no other live task references it through
 		// either mechanism. This covers legacy anchor-only seeds without destroying
 		// evidence anchored by another task.
-		res, err := tx.Exec(`
+		res, err := tx.ExecContext(ctx, `
 WITH candidate_assets AS (
   SELECT id FROM assets WHERE $1 = ANY(task_ids)
   UNION
@@ -798,21 +806,21 @@ DELETE FROM assets a USING deletable d WHERE a.id=d.id`, id, expID)
 		}
 		result.AssetsDeleted, _ = res.RowsAffected()
 
-		res, err = tx.Exec(`UPDATE assets SET task_ids = array_remove(task_ids, $1) WHERE $1 = ANY(task_ids)`, id)
+		res, err = tx.ExecContext(ctx, `UPDATE assets SET task_ids = array_remove(task_ids, $1) WHERE $1 = ANY(task_ids)`, id)
 		if err != nil {
 			return result, err
 		}
 		result.AssetsDetached, _ = res.RowsAffected()
 	}
 	if deleteFindings {
-		res, err := tx.Exec(`DELETE FROM findings WHERE task_id = $1`, id)
+		res, err := tx.ExecContext(ctx, `DELETE FROM findings WHERE task_id = $1`, id)
 		if err != nil {
 			return result, err
 		}
 		result.FindingsDeleted, _ = res.RowsAffected()
 	}
 	if deleteLLMRecords {
-		res, err := tx.Exec(`DELETE FROM llm_records WHERE COALESCE(task_id,'')=$1`, strconv.FormatInt(id, 10))
+		res, err := tx.ExecContext(ctx, `DELETE FROM llm_records WHERE COALESCE(task_id,'')=$1`, strconv.FormatInt(id, 10))
 		if err != nil {
 			return result, err
 		}
@@ -820,10 +828,21 @@ DELETE FROM assets a USING deletable d WHERE a.id=d.id`, id, expID)
 	}
 	// llm_usage (the token metering ledger) is intentionally NOT deleted with the
 	// task — it is kept as historical accounting even after the task is gone.
-	if _, err := tx.Exec(`DELETE FROM tasks WHERE id=$1`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE id=$1`, id); err != nil {
 		return result, err
 	}
-	if _, err := tx.Exec(`DELETE FROM explorations WHERE id=$1`, expID); err != nil {
+	// 先按探索批量删除子记录，避免逐个节点触发 SET NULL 或边删除后又立即删掉这些行。
+	// 其他探索引用本探索节点的记录仍由外键置空，并保留其原有内容。
+	for _, query := range []string{
+		`DELETE FROM activity WHERE exploration_id=$1`,
+		`DELETE FROM side_question_sessions WHERE exploration_id=$1`,
+		`DELETE FROM exploration_edges WHERE exploration_id=$1`,
+	} {
+		if _, err := tx.ExecContext(ctx, query, expID); err != nil {
+			return result, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM explorations WHERE id=$1`, expID); err != nil {
 		return result, err
 	}
 	return result, tx.Commit()

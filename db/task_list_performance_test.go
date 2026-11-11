@@ -96,7 +96,7 @@ VALUES ($1,'goal','{}','met'), ($1,'goal','{}','open')`, task.ExplorationID); er
 		t.Fatal(err)
 	}
 
-	all, err := d.TaskListMetricsAll()
+	all, err := d.TaskListMetricsAll(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

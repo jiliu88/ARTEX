@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,36 @@ import (
 	pgdb "github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/traffic"
 )
+
+func TestManagerCanceledDeleteRestoresStagedFiles(t *testing.T) {
+	dataDir := t.TempDir()
+	m, err := NewManager(dataDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+	task, err := m.CreateTask("canceled deletion", "synthetic files", nil, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = m.DeleteTask(task.ID, DeleteTaskOptions{DeleteFiles: true}) })
+	createDeleteFixture(t, dataDir, filepath.Join("tasks", task.ID), true)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := m.DeleteTaskContext(ctx, task.ID, DeleteTaskOptions{DeleteFiles: true}); err == nil {
+		t.Fatal("canceled deletion unexpectedly succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "tasks", task.ID)); err != nil {
+		t.Fatalf("task files were not restored: %v", err)
+	}
+	staged, err := os.ReadDir(filepath.Join(dataDir, ".delete-staging"))
+	if err != nil || len(staged) != 0 {
+		t.Fatalf("unrestored deletion stages=%d err=%v", len(staged), err)
+	}
+	if _, ok := m.Task(task.ID); !ok {
+		t.Fatal("canceled deletion removed task from registry")
+	}
+}
 
 func TestSeedAssociatesTargetAssetWithTask(t *testing.T) {
 	m, err := NewManager(t.TempDir(), "")

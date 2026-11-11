@@ -2015,6 +2015,11 @@ func (m *Manager) SetTaskStatus(id, status string) error {
 // staged while PostgreSQL excludes asset/anchor writers. Both are restored on a
 // database failure and purged only after its commit.
 func (m *Manager) DeleteTask(id string, opts DeleteTaskOptions) (DeleteTaskResult, error) {
+	return m.DeleteTaskContext(context.Background(), id, opts)
+}
+
+// DeleteTaskContext 将请求取消传入删除事务；失败后恢复暂存的文件和流量。
+func (m *Manager) DeleteTaskContext(ctx context.Context, id string, opts DeleteTaskOptions) (DeleteTaskResult, error) {
 	result := DeleteTaskResult{Deleted: id}
 	n, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
@@ -2055,7 +2060,7 @@ func (m *Manager) DeleteTask(id string, opts DeleteTaskOptions) (DeleteTaskResul
 	}
 
 	dbResult, err := m.pg.DeleteTaskCascadePrepared(
-		n, opts.DeleteAssets, opts.DeleteFindings, opts.DeleteLLMRecords, prepare,
+		ctx, n, opts.DeleteAssets, opts.DeleteFindings, opts.DeleteLLMRecords, prepare,
 	)
 	if err != nil {
 		return result, rollbackTaskDelete(err, trafficStage, fileStage)

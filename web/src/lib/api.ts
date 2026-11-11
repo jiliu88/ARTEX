@@ -321,8 +321,8 @@ export const api = {
     post<{ ok: boolean }>("/auth/change-password", { old_password: oldPassword, new_password: newPassword }),
 
   // ---- tasks ----
-  tasks: () =>
-    get<{ tasks: Task[]; active: string }>("/tasks").then((r) => ({ tasks: arr(r.tasks), active: r.active ?? "" })),
+  tasks: (signal?: AbortSignal) =>
+    get<{ tasks: Task[]; active: string }>("/tasks", signal).then((r) => ({ tasks: arr(r.tasks), active: r.active ?? "" })),
   task: (id: string, signal?: AbortSignal) => get<Task>(`/tasks/${encodeURIComponent(id)}`, signal),
   createTask: (input: {
     name?: string;

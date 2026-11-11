@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -1271,19 +1272,19 @@ FROM assets WHERE $1 = ANY(task_ids)`, taskID)
 // were anchor-only) are covered. Protection is host-wide: if another live task
 // references any asset for a candidate host, that host's global traffic remains.
 func (s *AssetStore) HostsForTaskDeletion(taskID, explorationID int64) ([]string, error) {
-	return hostsForTaskDeletion(s.db, taskID, explorationID)
+	return hostsForTaskDeletion(context.Background(), s.db, taskID, explorationID)
 }
 
 type rowsQuerier interface {
-	Query(query string, args ...any) (*sql.Rows, error)
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
 // hostsForTaskDeletion is shared by the read-only AssetStore API and the task
 // deletion transaction. Coordinated traffic deletion must call it through the
 // transaction path so asset/anchor writes stay locked until the task delete is
 // committed.
-func hostsForTaskDeletion(q rowsQuerier, taskID, explorationID int64) ([]string, error) {
-	rows, err := q.Query(`
+func hostsForTaskDeletion(ctx context.Context, q rowsQuerier, taskID, explorationID int64) ([]string, error) {
+	rows, err := q.QueryContext(ctx, `
 WITH current_assets AS (
   SELECT id FROM assets WHERE $1 = ANY(task_ids)
   UNION

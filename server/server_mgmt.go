@@ -174,7 +174,7 @@ func (s *Server) pgDeleteTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
-	result, err := s.m.DeleteTask(id, opts)
+	result, err := s.m.DeleteTaskContext(r.Context(), id, opts)
 	if err != nil {
 		var committed *taskDeleteCommittedError
 		if errors.As(err, &committed) {
@@ -186,6 +186,12 @@ func (s *Server) pgDeleteTask(w http.ResponseWriter, r *http.Request) {
 			s.taskAgentMu.Unlock()
 			deleted = true
 			writeCommittedTaskDelete(w, result, err)
+			return
+		}
+		var sqlState interface{ SQLState() string }
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+			(errors.As(err, &sqlState) && (sqlState.SQLState() == "55P03" || sqlState.SQLState() == "57014")) {
+			writeErr(w, http.StatusConflict, "删除因等待其他操作或执行超时已取消，请稍后重试")
 			return
 		}
 		writeErr(w, 500, err.Error())
