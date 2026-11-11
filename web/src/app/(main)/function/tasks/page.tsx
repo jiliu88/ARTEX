@@ -160,6 +160,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { api, type ScheduleInput } from "@/lib/api";
+import { startPolling } from "@/lib/polling";
 import {
   getLocalStorageValue,
   setLocalStorageValue,
@@ -617,11 +618,17 @@ export default function TasksPage() {
   // POLL_MS but usually comes back unchanged, and setTasks on an identical payload would
   // re-render the whole page for nothing. Bail out when it matches.
   const lastRef = React.useRef<string>("");
+  const loadingRef = React.useRef<Promise<void> | null>(null);
+  const loadRevision = React.useRef(0);
 
-  const load = React.useCallback(() => {
-    api
-      .tasks()
+  const load = React.useCallback((signal?: AbortSignal) => {
+    // 手动刷新与自动轮询共用一次请求，避免慢响应时不断追加查询。
+    if (loadingRef.current) return loadingRef.current;
+    const revision = loadRevision.current;
+    const pending = api
+      .tasks(signal)
       .then((r) => {
+        if (signal?.aborted || revision !== loadRevision.current) return;
         const next = r.tasks.map((t) =>
           t.id === r.active ? { ...t, active: true } : t,
         );
@@ -632,8 +639,25 @@ export default function TasksPage() {
       })
       .catch(() => {
         // Polling is best-effort; the next interval retries automatically.
+      })
+      .finally(() => {
+        loadingRef.current = null;
       });
+    loadingRef.current = pending;
+    return pending;
   }, []);
+
+  const refreshAfterDelete = React.useCallback((ids: string[]) => {
+    if (ids.length > 0) {
+      loadRevision.current++;
+      lastRef.current = "";
+      const removed = new Set(ids);
+      setTasks((current) => current.filter((task) => !removed.has(task.id)));
+    }
+    // 删除之前发出的旧列表不能重新带回已删除任务；待它结束后再请求新列表。
+    if (loadingRef.current) void loadingRef.current.then(() => load());
+    else void load();
+  }, [load]);
 
   const loadCategories = React.useCallback(() => {
     api
@@ -648,10 +672,8 @@ export default function TasksPage() {
   }, []);
 
   React.useEffect(() => {
-    load();
     loadCategories();
-    const i = setInterval(load, POLL_MS);
-    return () => clearInterval(i);
+    return startPolling(load, POLL_MS);
   }, [load, loadCategories]);
 
   const refreshCategoriesAndTasks = React.useCallback(() => {
@@ -714,13 +736,13 @@ export default function TasksPage() {
         } else {
           toast.success(deleteSummary(result));
         }
-        load();
+        refreshAfterDelete([id]);
       } catch (e) {
         toast.error("删除失败：" + (e as Error).message);
         throw e;
       }
     },
-    [load],
+    [refreshAfterDelete],
   );
 
   // controlTask 是行内暂停/继续:批量走 controlTasksBatch,单行走单任务接口,省去
@@ -901,9 +923,9 @@ export default function TasksPage() {
           `${failed.length} 个任务删除失败：${head}${failed.length > 3 ? " 等" : ""}`,
         );
       }
-      load();
+      refreshAfterDelete(deleted);
     },
-    [load],
+    [refreshAfterDelete],
   );
 
   const selectedTasks = React.useMemo(
@@ -2954,6 +2976,8 @@ function DeleteTaskDialog({
     try {
       await onDelete(task.id, options);
       setOpen(false);
+    } catch {
+      // 调用方已展示失败原因，保留弹窗并恢复按钮以便重试。
     } finally {
       setDeleting(false);
     }
@@ -3131,6 +3155,8 @@ function BulkDeleteTasksDialog({
     try {
       await onDelete(ids, options, setDone);
       setOpen(false);
+    } catch {
+      // 调用方已展示失败原因，恢复按钮以便重试剩余任务。
     } finally {
       setDeleting(false);
     }

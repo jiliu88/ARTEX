@@ -1310,8 +1310,10 @@ type TaskListMetrics struct {
 // TaskListMetricsAll returns list aggregates for every live task in one query.
 // The lateral lookups use the per-exploration indexes instead of grouping the
 // complete activity history on every poll.
-func (d *DB) TaskListMetricsAll() (map[int64]TaskListMetrics, error) {
-	rows, err := d.Query(`
+func (d *DB) TaskListMetricsAll(ctx context.Context) (map[int64]TaskListMetrics, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	rows, err := d.QueryContext(ctx, `
 		SELECT task.exploration_id,
 		       COALESCE(token_metrics.input_tokens,0),
 		       COALESCE(token_metrics.output_tokens,0),

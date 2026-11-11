@@ -1256,7 +1256,11 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		active = t.ID
 	}
 	list := s.m.List()
-	metrics, _ := s.m.PG().TaskListMetricsAll()
+	metrics, err := s.m.PG().TaskListMetricsAll(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "任务统计暂时不可用，请稍后重试")
+		return
+	}
 	distinct, _ := s.m.pg.DistinctFindingStatsByTask()
 	archiveBlockers, _ := s.m.PG().TaskArchiveBlockers()
 	dtos := make([]TaskDTO, 0, len(list))

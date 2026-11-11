@@ -23,10 +23,27 @@ await page.addInitScript(()=>{
  if(!/^\/login\/?$/.test(location.pathname))localStorage.setItem('artex_token','synthetic-browser-only');
 });
 let mode='stats-hang';const errors=[];
+let listStarts=0,listActive=0,listMax=0,listDeleted=false,deleteAttempts=0;
 page.on('pageerror',e=>errors.push(e.message));
 const fixture={id:'1',name:'合成加载回归任务',description:'合成加载回归任务',goal:'验证加载',status:'paused',paused:true,created_at:1,worker_count:1,goals_total:0,goals_met:0,source_tasks:[],llm_profile_ids:[]};
 await page.route('**/api/**',async route=>{
  const url=new URL(route.request().url());
+ if(url.pathname==='/api/tasks') {
+  listStarts++;listActive++;listMax=Math.max(listMax,listActive);
+  const tasks=listDeleted?[]:[fixture];
+  try {
+   if(mode==='task-list-slow')await new Promise(resolve=>setTimeout(resolve,12000));
+   await route.fulfill({json:{tasks,active:''}});
+  } finally {listActive--;}
+  return;
+ }
+ if(url.pathname==='/api/task-categories'){await route.fulfill({json:[]});return;}
+ if(url.pathname==='/api/tasks/1'&&route.request().method()==='DELETE') {
+  deleteAttempts++;
+  if(deleteAttempts===1){await route.fulfill({status:409,json:{error:'删除因等待其他操作或执行超时已取消，请稍后重试'}});return;}
+  listDeleted=true;
+  await route.fulfill({json:{deleted:'1',assets_deleted:0,assets_detached:0,traffic_deleted:0,files_deleted:false,findings_deleted:0,llm_records_deleted:0}});return;
+ }
  if(url.pathname==='/api/traffic') {
   if(mode==='traffic-hang'){await new Promise(r=>setTimeout(r,17000));await route.abort().catch(()=>{});return;}
   await route.fulfill({json:{enabled:true,exchanges:[],total:0,page:0,size:100}});return;
@@ -72,6 +89,27 @@ try {
  mode='ok';await page.waitForResponse(response=>new URL(response.url()).pathname==='/api/traffic'&&response.status()===200,{timeout:7000});
  assert.equal(trafficMax,1);
  console.log('PASS:新增任务流量挂起时并发不超过1且超时后恢复');
+ mode='task-list-slow';listStarts=0;
+ const listResponse=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/tasks');
+ await page.goto(url.replace('/detail/?id=1&tab=assets','/'));
+ await page.waitForTimeout(10500);
+ assert.equal(listStarts,1);assert.equal(listMax,1);
+ await listResponse;
+ await page.getByRole('button',{name:'删除任务',exact:true}).click();
+ const dialog=page.getByRole('alertdialog');
+ await dialog.getByRole('button',{name:'删除',exact:true}).click();
+ await page.getByText('删除失败：删除因等待其他操作或执行超时已取消，请稍后重试',{exact:true}).waitFor();
+ await dialog.getByRole('button',{name:'删除',exact:true}).waitFor({state:'visible'});
+ assert.equal(await dialog.getByRole('button',{name:'删除',exact:true}).isEnabled(),true);
+ // 在删除成功前发出一次旧列表，验证迟到响应不会复活已删除的行。
+ await page.waitForRequest(request=>new URL(request.url()).pathname==='/api/tasks',{timeout:12000});
+ mode='ok';
+ await dialog.getByRole('button',{name:'删除',exact:true}).click();
+ await page.getByRole('link',{name:'合成加载回归任务',exact:true}).waitFor({state:'hidden'});
+ await page.waitForTimeout(12500);
+ assert.equal(await page.getByRole('link',{name:'合成加载回归任务',exact:true}).count(),0);
+ assert.equal(listMax,1);
+ console.log('PASS:任务列表慢请求不重叠、删除失败可重试、旧响应不复活已删除任务');
  mode='401';await page.goto(url);await page.waitForURL(/\/login\/?$/,{timeout:5000});
  assert.equal(await page.evaluate(()=>localStorage.getItem('artex_token')),null);
  console.log('PASS:401跳转登录并清除失效会话');

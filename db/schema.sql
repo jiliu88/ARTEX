@@ -320,6 +320,8 @@ ALTER TABLE activity ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{
 -- original session). Only worker='mainagent' rows carry it.
 ALTER TABLE activity ADD COLUMN IF NOT EXISTS main_seg INTEGER;
 CREATE INDEX IF NOT EXISTS idx_act_node  ON activity(exploration_id, node_id, id);
+-- 删除节点的外键回查只带 node_id，不能依赖 exploration_id 前导的复合索引。
+CREATE INDEX IF NOT EXISTS idx_act_node_fk ON activity(node_id) WHERE node_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_act_since ON activity(exploration_id, id);
 CREATE INDEX IF NOT EXISTS idx_act_tool_call ON activity(exploration_id, tool_use_id, id)
   WHERE kind IN ('tool_use', 'tool_result');
@@ -1175,6 +1177,7 @@ ALTER TABLE findings ADD COLUMN IF NOT EXISTS name   TEXT NOT NULL DEFAULT '';
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS report TEXT NOT NULL DEFAULT '';
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS report_conversation_id BIGINT REFERENCES conversations(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_findings_task ON findings(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_findings_node_fk ON findings(node_id) WHERE node_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_findings_time ON findings(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status, created_at DESC);
 -- 「按资产」视图靠 asset_ids @> '[<id>]' 反查发现,没有这个 GIN 索引就是全表扫。
@@ -1480,6 +1483,7 @@ CREATE TABLE IF NOT EXISTS finding_cases (
     active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_finding_cases_task_fk ON finding_cases(task_id) WHERE task_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS finding_case_members (
     finding_id BIGINT PRIMARY KEY REFERENCES findings(id) ON DELETE CASCADE,
     case_id BIGINT NOT NULL REFERENCES finding_cases(id),
@@ -1507,6 +1511,7 @@ CREATE TABLE IF NOT EXISTS finding_case_suggestions (
     UNIQUE(left_id,right_id),
     CHECK(left_id < right_id)
 );
+CREATE INDEX IF NOT EXISTS idx_finding_case_suggestions_task_fk ON finding_case_suggestions(task_id);
 -- A suggestion is a group.  left_id/right_id remain compatibility anchors for
 -- old clients and are kept at the two smallest surviving member ids.
 ALTER TABLE finding_case_suggestions DROP CONSTRAINT IF EXISTS finding_case_suggestions_left_id_right_id_key;
@@ -1603,6 +1608,7 @@ ALTER TABLE finding_case_review_runs ADD COLUMN IF NOT EXISTS finding_ids JSONB 
 ALTER TABLE finding_case_review_runs ADD COLUMN IF NOT EXISTS reviewed_ids JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE finding_case_review_runs ADD COLUMN IF NOT EXISTS conclusion JSONB NOT NULL DEFAULT '{}';
 CREATE INDEX IF NOT EXISTS idx_finding_case_reviews_active_task ON finding_case_review_runs(task_id) WHERE state IN ('queued','running');
+CREATE INDEX IF NOT EXISTS idx_finding_case_reviews_task_fk ON finding_case_review_runs(task_id) WHERE task_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS task_schedule_history (
  id BIGSERIAL PRIMARY KEY,
@@ -1634,6 +1640,7 @@ CREATE TABLE IF NOT EXISTS task_intelligence (
     UNIQUE(task_id,kind,fingerprint)
 );
 CREATE INDEX IF NOT EXISTS idx_task_intelligence_task ON task_intelligence(task_id,id DESC);
+CREATE INDEX IF NOT EXISTS idx_task_intelligence_node_fk ON task_intelligence(node_id) WHERE node_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_task_intelligence_assets ON task_intelligence USING gin(asset_ids);
 
 -- Optional derived credential presentation; raw intelligence remains authoritative.
