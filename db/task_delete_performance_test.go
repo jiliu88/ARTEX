@@ -12,7 +12,7 @@ func TestTaskDeleteBulkChildrenBeforeNodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 	first, err := d.CreateTask("bulk delete", "synthetic graph", nil, 0, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ CREATE TRIGGER %s BEFORE DELETE ON exploration_nodes FOR EACH ROW EXECUTE FUNCTI
 	if err := d.DeleteTask(first.ID); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("nodes=1000 activity_rows=20020 delete_ms=%d", time.Since(started).Milliseconds())
+	t.Logf("generated_nodes=1000 delete_ms=%d", time.Since(started).Milliseconds())
 	var remaining, foreignActivity, retainedFinding int
 	if err := d.QueryRow(`SELECT count(*) FROM activity WHERE exploration_id=$1`, first.ExplorationID).Scan(&remaining); err != nil || remaining != 0 {
 		t.Fatalf("owned activity=%d err=%v", remaining, err)
@@ -82,7 +82,7 @@ func TestTaskDeleteCancellationReleasesLocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 	task, err := d.CreateTask("canceled delete", "synthetic lock", nil, 0, 0)
 	if err != nil {
 		t.Fatal(err)
