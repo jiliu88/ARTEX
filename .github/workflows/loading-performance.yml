@@ -41,7 +41,7 @@ jobs:
         run: |
           gofmt -w taskbrowser/*.go agent/browser_env.go server/task_browser*.go server/assembly.go server/server.go agent/worker.go agent/planner.go agent/mainagent.go
           gofmt -w db/loading*test.go db/exploration.go db/intercept.go db/task_assets.go db/task_assets_context.go server/intercept.go server/server.go server/task_assets.go server/request_timing*.go
-          gofmt -w db/tasks.go db/task_delete*test.go db/task_list_performance_test.go server/manager.go server/manager_delete_files_test.go server/server_mgmt.go
+          gofmt -w db/tasks.go db/assets.go db/task_archives.go db/task_delete*test.go db/task_list_performance_test.go server/manager.go server/manager_delete_files_test.go server/server_mgmt.go
           git diff > gofmt.patch
       - name: Task browser concurrency and lifecycle
         run: |

@@ -760,7 +760,7 @@ func (d *DB) DeleteTaskCascadePrepared(
 		}
 	}
 	if prepare != nil {
-		hosts, err := hostsForTaskDeletion(tx, id, expID)
+		hosts, err := hostsForTaskDeletion(ctx, tx, id, expID)
 		if err != nil {
 			return result, err
 		}

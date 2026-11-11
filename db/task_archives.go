@@ -679,7 +679,7 @@ func archiveAssetMetadata(tx *sql.Tx, taskID, expID int64, assetRows json.RawMes
 			}
 		}
 	}
-	exclusiveHosts, err := hostsForTaskDeletion(tx, taskID, expID)
+	exclusiveHosts, err := hostsForTaskDeletion(context.Background(), tx, taskID, expID)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
