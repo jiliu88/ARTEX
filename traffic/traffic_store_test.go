@@ -320,6 +320,7 @@ func TestGCCollectsBlobsAndEmptyBuckets(t *testing.T) {
 	if n, err := tr.DeleteHostsExact([]string{host}); err != nil || n != 1 {
 		t.Fatalf("DeleteHostsExact=(%d,%v)，应为 (1,nil)", n, err)
 	}
+	tr.reaping.Wait()
 	if _, err := os.Stat(filepath.Join(bucket, hash+".bin")); !os.IsNotExist(err) {
 		t.Fatalf("失去引用的 blob 未被回收：%v", err)
 	}

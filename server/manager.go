@@ -291,6 +291,9 @@ type Manager struct {
 	proxyPool           *proxyPoolState
 	forwardProxy        *dynamicForwardProxy
 	proxyPoolConfigured atomic.Bool
+	fileReaping         sync.WaitGroup
+	fileCleanupCtx      context.Context
+	fileCleanupCancel   context.CancelFunc
 }
 
 // SetTaskControlMutex lets lifecycle operations that originate in Manager
@@ -593,6 +596,8 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 		log.Printf("[llmusage] create table: %v", err)
 	}
 	m := &Manager{dir: dir, pg: pg, assets: pg.Assets(), tasks: map[string]*Task{}, interceptor: intercept.New(pg)}
+	m.fileCleanupCtx, m.fileCleanupCancel = context.WithCancel(context.Background())
+	m.resumeTaskFileCleanup()
 	if fp, ferr := newDynamicForwardProxy(func() string { return m.GlobalProxy() }); ferr == nil {
 		m.forwardProxy = fp
 		// An empty runtime route means direct egress, even when the persisted
@@ -1110,6 +1115,10 @@ func (m *Manager) SetGlobalProxy(raw string) error {
 }
 
 func (m *Manager) Close() error {
+	if m.fileCleanupCancel != nil {
+		m.fileCleanupCancel()
+	}
+	m.fileReaping.Wait()
 	if m.forwardProxy != nil {
 		_ = m.forwardProxy.Close()
 	}
@@ -2020,23 +2029,26 @@ func (m *Manager) DeleteTask(id string, opts DeleteTaskOptions) (DeleteTaskResul
 
 // DeleteTaskContext 将请求取消传入删除事务；失败后恢复暂存的文件和流量。
 func (m *Manager) DeleteTaskContext(ctx context.Context, id string, opts DeleteTaskOptions) (DeleteTaskResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
 	result := DeleteTaskResult{Deleted: id}
 	n, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
 		return result, err
 	}
-	registered, err := m.pg.GetTask(n)
-	if err != nil {
-		return result, err
-	}
-	if registered == nil {
+	var explorationID int64
+	err = m.pg.QueryRowContext(ctx, `SELECT exploration_id FROM tasks WHERE id=$1 AND deleted_at IS NULL`, n).Scan(&explorationID)
+	if errors.Is(err, sql.ErrNoRows) {
 		m.forgetTask(id, n)
 		return result, nil
+	}
+	if err != nil {
+		return result, err
 	}
 
 	var fileStage *taskFileDeleteStage
 	if opts.DeleteFiles {
-		fileStage, err = stageTaskFiles(m.dir, id, registered.ExplorationID)
+		fileStage, err = stageTaskFiles(m.dir, id, explorationID)
 		if err != nil {
 			return result, err
 		}
@@ -2050,7 +2062,7 @@ func (m *Manager) DeleteTaskContext(ctx context.Context, id string, opts DeleteT
 			if len(p.TrafficHosts) == 0 {
 				return nil
 			}
-			trafficStage, err = m.traffic.StageDeleteHostsExact(p.TrafficHosts)
+			trafficStage, err = m.traffic.StageDeleteHostsExactContext(ctx, p.TrafficHosts)
 			if err != nil {
 				return err
 			}
@@ -2069,6 +2081,8 @@ func (m *Manager) DeleteTaskContext(ctx context.Context, id string, opts DeleteT
 	result.AssetsDetached = dbResult.AssetsDetached
 	result.FindingsDeleted = dbResult.FindingsDeleted
 	result.LLMRecordsDeleted = dbResult.LLMRecordsDeleted
+	// 数据库已经提交，列表立即采用持久化结果，不再等磁盘回收才移除任务。
+	m.forgetTask(id, n)
 
 	// PostgreSQL is now authoritative: finalize the staged external deletion and
 	// forget the live task even if a final purge reports an error. Such errors are
@@ -2081,11 +2095,10 @@ func (m *Manager) DeleteTaskContext(ctx context.Context, id string, opts DeleteT
 		}
 	}
 	if fileStage != nil {
-		if err := fileStage.commit(); err != nil {
+		if err := m.commitTaskFiles(fileStage); err != nil {
 			finalizeErrs = append(finalizeErrs, fmt.Errorf("finalize task file deletion: %w", err))
 		}
 	}
-	m.forgetTask(id, n)
 	if err := errors.Join(finalizeErrs...); err != nil {
 		return result, &taskDeleteCommittedError{err: err}
 	}

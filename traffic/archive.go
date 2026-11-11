@@ -51,7 +51,7 @@ func (t *Traffic) ExportHosts(hosts []string, dir string) (int64, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "blobs"), 0o700); err != nil {
 		return 0, err
 	}
-	t.wmu.Lock()
+	t.lockForMutation()
 	defer t.wmu.Unlock()
 	unique := uniqueArchiveHosts(hosts)
 	placeholders := make([]string, len(unique))
@@ -147,7 +147,7 @@ func (t *Traffic) ImportArchive(dir string) (int64, error) {
 	if snapshot.Version != 1 {
 		return 0, fmt.Errorf("unsupported traffic archive version %d", snapshot.Version)
 	}
-	t.wmu.Lock()
+	t.lockForMutation()
 	defer t.wmu.Unlock()
 	for _, hash := range snapshot.Blobs {
 		if !blobHashRe.MatchString(hash) {

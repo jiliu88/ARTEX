@@ -30,7 +30,7 @@ func (t *Traffic) ReadEvidence(ctx context.Context, ids []string, consume func(E
 	if t == nil {
 		return errors.New("流量录制存储不可用")
 	}
-	t.wmu.Lock()
+	t.lockForMutation()
 	defer t.wmu.Unlock()
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
