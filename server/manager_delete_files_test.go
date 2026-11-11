@@ -43,6 +43,36 @@ func TestManagerCanceledDeleteRestoresStagedFiles(t *testing.T) {
 	}
 }
 
+func TestCommittedTaskFilesResumeAfterInterruptedCleanup(t *testing.T) {
+	dir := t.TempDir()
+	createDeleteFixture(t, dir, filepath.Join("tasks", "77"), true)
+	stage, err := stageTaskFiles(dir, "77", 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	m := &Manager{dir: dir, fileCleanupCtx: ctx}
+	if err := m.commitTaskFiles(stage); err != nil {
+		t.Fatal(err)
+	}
+	m.fileReaping.Wait()
+	if _, err := os.Stat(stage.stageDir); !os.IsNotExist(err) {
+		t.Fatalf("已提交目录仍留在回滚区：%v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, ".delete-trash"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("可恢复回收目录数=%d err=%v", len(entries), err)
+	}
+	recovered := &Manager{dir: dir, fileCleanupCtx: t.Context()}
+	recovered.resumeTaskFileCleanup()
+	recovered.fileReaping.Wait()
+	entries, err = os.ReadDir(filepath.Join(dir, ".delete-trash"))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("回收恢复后仍有 %d 个目录 err=%v", len(entries), err)
+	}
+}
+
 func TestSeedAssociatesTargetAssetWithTask(t *testing.T) {
 	m, err := NewManager(t.TempDir(), "")
 	if err != nil {

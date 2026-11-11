@@ -291,6 +291,9 @@ type Manager struct {
 	proxyPool           *proxyPoolState
 	forwardProxy        *dynamicForwardProxy
 	proxyPoolConfigured atomic.Bool
+	fileReaping sync.WaitGroup
+	fileCleanupCtx context.Context
+	fileCleanupCancel context.CancelFunc
 }
 
 // SetTaskControlMutex lets lifecycle operations that originate in Manager
@@ -593,6 +596,8 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 		log.Printf("[llmusage] create table: %v", err)
 	}
 	m := &Manager{dir: dir, pg: pg, assets: pg.Assets(), tasks: map[string]*Task{}, interceptor: intercept.New(pg)}
+	m.fileCleanupCtx, m.fileCleanupCancel = context.WithCancel(context.Background())
+	m.resumeTaskFileCleanup()
 	if fp, ferr := newDynamicForwardProxy(func() string { return m.GlobalProxy() }); ferr == nil {
 		m.forwardProxy = fp
 		// An empty runtime route means direct egress, even when the persisted
@@ -1110,6 +1115,10 @@ func (m *Manager) SetGlobalProxy(raw string) error {
 }
 
 func (m *Manager) Close() error {
+	if m.fileCleanupCancel != nil {
+		m.fileCleanupCancel()
+	}
+	m.fileReaping.Wait()
 	if m.forwardProxy != nil {
 		_ = m.forwardProxy.Close()
 	}
@@ -2086,7 +2095,7 @@ func (m *Manager) DeleteTaskContext(ctx context.Context, id string, opts DeleteT
 		}
 	}
 	if fileStage != nil {
-		if err := fileStage.commit(); err != nil {
+		if err := m.commitTaskFiles(fileStage); err != nil {
 			finalizeErrs = append(finalizeErrs, fmt.Errorf("finalize task file deletion: %w", err))
 		}
 	}
